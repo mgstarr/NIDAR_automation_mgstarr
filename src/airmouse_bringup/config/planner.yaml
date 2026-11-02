@@ -1,0 +1,6 @@
+# A* planner parameters. Filled in Phase 3.
+# The planner is a library, not a node: this file is loaded as an extra parameter file
+# into every node that plans (goal_planner_node, explorer_node), hence the "/**" wildcard.
+# Parameters (PLAN.md > Parameters reference): guarded_radius, safety_margin, wall_cost_weight.
+/**:
+  ros__parameters: {}

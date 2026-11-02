@@ -1,0 +1,14 @@
+{
+  "name": "AirMouse (ROS 2 Jazzy + Gazebo Harmonic)",
+  "dockerComposeFile": "docker-compose.yml",
+  "service": "dev",
+  "workspaceFolder": "/ws",
+  "remoteUser": "ubuntu",
+  "initializeCommand": "xhost +SI:localuser:$(id -un) || true",
+  "shutdownAction": "stopCompose",
+  "customizations": {
+    "vscode": {
+      "extensions": ["ms-python.python"]
+    }
+  }
+}

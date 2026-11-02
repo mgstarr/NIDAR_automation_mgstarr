@@ -1,0 +1,4 @@
+# RTAB-Map parameters. Mapping settings filled in Phase 2, odometry in Phase 6.
+# Parameters (PLAN.md > Parameters reference): grid_resolution, grid_height_band.
+rtabmap:
+  ros__parameters: {}

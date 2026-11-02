@@ -1,0 +1,37 @@
+# Run the AirMouse dev container without VS Code:
+#   xhost +SI:localuser:$(id -un)                      # allow the container to open windows
+#   docker compose -f .devcontainer/docker-compose.yml up -d --build
+#   docker compose -f .devcontainer/docker-compose.yml exec dev bash
+# VS Code's "Reopen in Container" uses this same file.
+name: airmouse
+
+services:
+  dev:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: airmouse-dev:jazzy
+    container_name: airmouse-dev
+    command: sleep infinity
+    volumes:
+      - ..:/ws                                  # repo root = ROS workspace root
+      - /tmp/.X11-unix:/tmp/.X11-unix:rw        # X11 / XWayland display socket
+    devices:
+      - /dev/dri:/dev/dri                       # fallback rendering on the integrated GPU
+    environment:
+      DISPLAY: ${DISPLAY:-:0}
+      QT_X11_NO_MITSHM: "1"
+      NVIDIA_VISIBLE_DEVICES: all
+      NVIDIA_DRIVER_CAPABILITIES: all           # "graphics" is needed for OpenGL, not only compute
+      # Hybrid (laptop) graphics: send OpenGL to the NVIDIA GPU (PRIME render offload).
+      __NV_PRIME_RENDER_OFFLOAD: "1"
+      __GLX_VENDOR_LIBRARY_NAME: nvidia
+    network_mode: host                          # ROS 2 discovery works the same as on the host
+    ipc: host
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]

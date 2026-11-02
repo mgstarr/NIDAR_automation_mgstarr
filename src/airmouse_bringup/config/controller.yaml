@@ -1,0 +1,6 @@
+# Controller node (pure pursuit -> /nav/cmd_vel_raw). Filled in Phase 4.
+# Parameters (PLAN.md > Parameters reference): flight_altitude, max_speed, max_accel,
+# max_yaw_rate, lookahead_min, lookahead_max, goal_tolerance_xy, goal_tolerance_yaw,
+# pose_timeout, path_timeout, control_rate.
+controller_node:
+  ros__parameters: {}

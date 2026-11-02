@@ -1,0 +1,7 @@
+# Explorer node: frontiers, camera coverage, viewpoints and the mission state machine.
+# Filled in Phase 5.
+# Parameters (PLAN.md > Parameters reference): replan_period, camera_hfov, coverage_range,
+# min_cluster_size, gain_weight, goal_switch_margin, stuck_timeout, mission_time_limit,
+# return_reserve, return_safety_factor, localization_lost_timeout, arena_bounds.
+explorer_node:
+  ros__parameters: {}

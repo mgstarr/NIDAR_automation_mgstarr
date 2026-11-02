@@ -1,0 +1,5 @@
+# robot_localization EKF. Filled in Phase 6.
+# Fuses RTAB-Map odometry, the camera IMU and the downward rangefinder;
+# publishes /odom and the odom -> base_link transform.
+ekf_filter_node:
+  ros__parameters: {}

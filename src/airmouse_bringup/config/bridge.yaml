@@ -1,0 +1,4 @@
+# ros_gz_bridge topic mappings: Gazebo topics -> the Interface contract names in PLAN.md.
+# Filled in Phase 1. Format: a list of {ros_topic_name, gz_topic_name, ros_type_name,
+# gz_type_name, direction} entries.
+[]
