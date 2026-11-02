@@ -15,3 +15,6 @@ __pycache__/
 
 # Editor
 .vscode/
+
+# Machine-specific dev container settings (written by initializeCommand)
+.devcontainer/.env

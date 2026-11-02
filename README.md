@@ -29,6 +29,7 @@ The first build downloads about 5 GB.
 
 ```bash
 xhost +SI:localuser:$(id -un)        # allow the container to open windows (once per login)
+echo RENDER_GID=$(getent group render | cut -d: -f3) > .devcontainer/.env   # host GPU group id
 docker compose -f .devcontainer/docker-compose.yml up -d --build
 docker compose -f .devcontainer/docker-compose.yml exec dev bash
 # when done:

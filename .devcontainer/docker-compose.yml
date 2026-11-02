@@ -1,5 +1,6 @@
 # Run the AirMouse dev container without VS Code:
 #   xhost +SI:localuser:$(id -un)                      # allow the container to open windows
+#   echo RENDER_GID=$(getent group render | cut -d: -f3) > .devcontainer/.env
 #   docker compose -f .devcontainer/docker-compose.yml up -d --build
 #   docker compose -f .devcontainer/docker-compose.yml exec dev bash
 # VS Code's "Reopen in Container" uses this same file.
@@ -18,6 +19,8 @@ services:
       - /tmp/.X11-unix:/tmp/.X11-unix:rw        # X11 / XWayland display socket
     devices:
       - /dev/dri:/dev/dri                       # fallback rendering on the integrated GPU
+    group_add:
+      - "${RENDER_GID:-render}"                 # host's render group id, so /dev/dri is usable
     environment:
       DISPLAY: ${DISPLAY:-:0}
       QT_X11_NO_MITSHM: "1"

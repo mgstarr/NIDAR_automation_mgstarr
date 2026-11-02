@@ -4,7 +4,7 @@
   "service": "dev",
   "workspaceFolder": "/ws",
   "remoteUser": "ubuntu",
-  "initializeCommand": "xhost +SI:localuser:$(id -un) || true",
+  "initializeCommand": "xhost +SI:localuser:$(id -un) || true; echo RENDER_GID=$(getent group render | cut -d: -f3) > .devcontainer/.env",
   "shutdownAction": "stopCompose",
   "customizations": {
     "vscode": {
