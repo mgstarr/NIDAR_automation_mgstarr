@@ -10,8 +10,8 @@ sensor topics, ground-truth odometry, and ground-truth layout files for scoring 
   measured with ground truth, see below
 - [x] Every contract sensor topic publishes at its rate (table below)
 - [x] Works with `use_lidar` true and false, and with plain and textured walls
-- [ ] Visual Gazebo/RViz check confirmed by the owner (see "Gazebo check")
-- [ ] Tagged `phase-1`
+- [x] Visual Gazebo/RViz check confirmed by the owner (keyboard flight, RViz displays)
+- [x] Tagged `phase-1`
 
 ## Commands
 
