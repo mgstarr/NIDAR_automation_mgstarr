@@ -1,6 +1,8 @@
 Panels:
   - Class: rviz_common/Displays
     Name: Displays
+  - Class: rviz_common/Views
+    Name: Views
 Visualization Manager:
   Class: ""
   Displays:
@@ -8,11 +10,74 @@ Visualization Manager:
       Name: Grid
       Enabled: true
       Reference Frame: <Fixed Frame>
+      Cell Size: 1
     - Class: rviz_default_plugins/TF
       Name: TF
       Enabled: true
+      Show Names: true
+      Marker Scale: 0.5
+    - Class: rviz_default_plugins/PointCloud2
+      Name: Depth points
+      Enabled: true
+      Topic:
+        Value: /camera/depth/points
+        Reliability Policy: Best Effort
+        Durability Policy: Volatile
+        Depth: 5
+      Style: Points
+      Size (Pixels): 2
+      Color Transformer: AxisColor
+      Axis: Z
+    - Class: rviz_default_plugins/LaserScan
+      Name: LiDAR scan
+      Enabled: true
+      Topic:
+        Value: /scan
+        Reliability Policy: Best Effort
+        Durability Policy: Volatile
+        Depth: 5
+      Style: Points
+      Size (Pixels): 3
+      Color Transformer: FlatColor
+      Color: 255; 0; 0
+    - Class: rviz_default_plugins/Range
+      Name: Range down
+      Enabled: true
+      Topic:
+        Value: /range/down
+        Reliability Policy: Best Effort
+        Durability Policy: Volatile
+        Depth: 5
+    - Class: rviz_default_plugins/Range
+      Name: Range up
+      Enabled: true
+      Topic:
+        Value: /range/up
+        Reliability Policy: Best Effort
+        Durability Policy: Volatile
+        Depth: 5
+    - Class: rviz_default_plugins/Odometry
+      Name: Ground truth
+      Enabled: true
+      Topic:
+        Value: /ground_truth/odom
+        Reliability Policy: Best Effort
+        Durability Policy: Volatile
+        Depth: 5
+      Keep: 200
+      Shape:
+        Value: Arrow
+        Shaft Length: 0.3
+    - Class: rviz_default_plugins/Image
+      Name: Camera
+      Enabled: true
+      Topic:
+        Value: /camera/color/image_raw
+        Reliability Policy: Best Effort
+        Durability Policy: Volatile
+        Depth: 5
   Global Options:
-    Fixed Frame: map
+    Fixed Frame: odom
     Frame Rate: 30
   Tools:
     - Class: rviz_default_plugins/Interact
@@ -22,6 +87,15 @@ Visualization Manager:
         Value: /goal_pose
   Views:
     Current:
-      Class: rviz_default_plugins/TopDownOrtho
+      Class: rviz_default_plugins/Orbit
       Name: Current View
-      Scale: 40
+      Distance: 12
+      Pitch: 0.9
+      Yaw: 3.6
+      Focal Point:
+        X: 4
+        Y: 0
+        Z: 0
+Window Geometry:
+  Width: 1200
+  Height: 800

@@ -13,6 +13,12 @@
   <exec_depend>launch_ros</exec_depend>
   <exec_depend>airmouse_description</exec_depend>
   <exec_depend>airmouse_nav</exec_depend>
+  <exec_depend>ros_gz_sim</exec_depend>
+  <exec_depend>ros_gz_bridge</exec_depend>
+  <exec_depend>tf2_ros</exec_depend>
+  <exec_depend>depth_image_proc</exec_depend>
+  <exec_depend>rviz2</exec_depend>
+  <exec_depend>teleop_twist_keyboard</exec_depend>
 
   <export>
     <build_type>ament_cmake</build_type>

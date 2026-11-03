@@ -25,6 +25,7 @@ setup(
             'controller_node = airmouse_nav.nodes.controller_node:main',
             'safety_hook_node = airmouse_nav.nodes.safety_hook_node:main',
             'goal_planner_node = airmouse_nav.nodes.goal_planner_node:main',
+            'sim_bridge_node = airmouse_nav.bridges.sim_bridge_node:main',
         ],
     },
 )

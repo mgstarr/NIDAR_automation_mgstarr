@@ -1,0 +1,6 @@
+# Simulation bridge node (sim only): /cmd_vel -> Gazebo velocity plugin, 1-beam scans -> Range.
+sim_bridge_node:
+  ros__parameters:
+    plugin_frame: body            # measured in Phase 1: the plugin reads body-frame velocity
+    range_field_of_view: 0.47     # rad; VL53L1X 27 deg cone
+    enable_period: 1.0            # s; how often the velocity controller is re-enabled

@@ -10,8 +10,10 @@ viewpoint selection, A* planning and pure-pursuit control.
   `mission`, `pure_pursuit`.
 - `airmouse_nav/nodes/`: thin ROS 2 wrappers: `explorer_node`, `controller_node`,
   `safety_hook_node` (pass-through now, CBF later), `goal_planner_node` (test tool).
-- `airmouse_nav/bridges/`: `sim_bridge` (adapter to the Gazebo velocity plugin) and
-  `fc_bridge` (hook for the real flight controller; protocol not decided).
+- `airmouse_nav/bridges/`: `sim_bridge` (pure maths: body-frame command -> plugin frame,
+  1-beam scan -> range) and `sim_bridge_node` (sim only: `/cmd_vel` -> Gazebo velocity
+  plugin, `/range/*/scan` -> `/range/down`, `/range/up`); `fc_bridge` is the hook for the
+  real flight controller (protocol not decided).
 - `test/`: pytest unit tests for every `core/` module.
 
 ## Run
@@ -40,3 +42,4 @@ Filled in as the nodes are implemented (Phases 3–5). Planned, from `docs/PLAN.
 | `explorer_node` | `/map`, TF | `/nav/path`, `/nav/goal`, `/nav/frontiers`, `/nav/coverage`, `/mission/state`; serves `/mission/start`, `/mission/abort`, `/mission/return_home` |
 | `controller_node` | `/nav/path`, TF | `/nav/cmd_vel_raw` (30 Hz) |
 | `safety_hook_node` | `/nav/cmd_vel_raw` | `/cmd_vel` (30 Hz) |
+| `sim_bridge_node` (sim) | `/cmd_vel`, `/range/down/scan`, `/range/up/scan`, `/ground_truth/odom` | `/airmouse/cmd_twist`, `/airmouse/enable`, `/range/down`, `/range/up` |

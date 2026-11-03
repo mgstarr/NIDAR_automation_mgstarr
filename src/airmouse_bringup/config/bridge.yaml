@@ -1,4 +1,28 @@
-# ros_gz_bridge topic mappings: Gazebo topics -> the Interface contract names in PLAN.md.
-# Filled in Phase 1. Format: a list of {ros_topic_name, gz_topic_name, ros_type_name,
-# gz_type_name, direction} entries.
-[]
+# ros_gz_bridge topic mappings: Gazebo topics -> the Interface contract names in docs/PLAN.md.
+# Ground-truth TF (odom -> base_link) is bridged separately by sim.launch.py, only when
+# use_ground_truth is true. /range/*/scan are 1-beam scans that sim_bridge_node turns into
+# the contract's /range/down and /range/up (sensor_msgs/Range).
+- {ros_topic_name: /clock, gz_topic_name: /clock,
+   ros_type_name: rosgraph_msgs/msg/Clock, gz_type_name: gz.msgs.Clock, direction: GZ_TO_ROS}
+- {ros_topic_name: /camera/color/image_raw, gz_topic_name: /airmouse/rgbd/image,
+   ros_type_name: sensor_msgs/msg/Image, gz_type_name: gz.msgs.Image, direction: GZ_TO_ROS}
+- {ros_topic_name: /camera/depth/image_rect_raw, gz_topic_name: /airmouse/rgbd/depth_image,
+   ros_type_name: sensor_msgs/msg/Image, gz_type_name: gz.msgs.Image, direction: GZ_TO_ROS}
+- {ros_topic_name: /camera/color/camera_info, gz_topic_name: /airmouse/rgbd/camera_info,
+   ros_type_name: sensor_msgs/msg/CameraInfo, gz_type_name: gz.msgs.CameraInfo, direction: GZ_TO_ROS}
+- {ros_topic_name: /camera/depth/camera_info, gz_topic_name: /airmouse/rgbd/camera_info,
+   ros_type_name: sensor_msgs/msg/CameraInfo, gz_type_name: gz.msgs.CameraInfo, direction: GZ_TO_ROS}
+- {ros_topic_name: /camera/imu, gz_topic_name: /airmouse/imu,
+   ros_type_name: sensor_msgs/msg/Imu, gz_type_name: gz.msgs.IMU, direction: GZ_TO_ROS}
+- {ros_topic_name: /scan, gz_topic_name: /airmouse/scan,
+   ros_type_name: sensor_msgs/msg/LaserScan, gz_type_name: gz.msgs.LaserScan, direction: GZ_TO_ROS}
+- {ros_topic_name: /range/down/scan, gz_topic_name: /airmouse/range_down,
+   ros_type_name: sensor_msgs/msg/LaserScan, gz_type_name: gz.msgs.LaserScan, direction: GZ_TO_ROS}
+- {ros_topic_name: /range/up/scan, gz_topic_name: /airmouse/range_up,
+   ros_type_name: sensor_msgs/msg/LaserScan, gz_type_name: gz.msgs.LaserScan, direction: GZ_TO_ROS}
+- {ros_topic_name: /ground_truth/odom, gz_topic_name: /airmouse/odometry,
+   ros_type_name: nav_msgs/msg/Odometry, gz_type_name: gz.msgs.Odometry, direction: GZ_TO_ROS}
+- {ros_topic_name: /airmouse/cmd_twist, gz_topic_name: /airmouse/gazebo/command/twist,
+   ros_type_name: geometry_msgs/msg/Twist, gz_type_name: gz.msgs.Twist, direction: ROS_TO_GZ}
+- {ros_topic_name: /airmouse/enable, gz_topic_name: /airmouse/enable,
+   ros_type_name: std_msgs/msg/Bool, gz_type_name: gz.msgs.Boolean, direction: ROS_TO_GZ}

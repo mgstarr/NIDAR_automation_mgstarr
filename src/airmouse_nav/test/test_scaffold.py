@@ -23,6 +23,7 @@ FORBIDDEN_INTERNAL = ('airmouse_nav.nodes', 'airmouse_nav.bridges')
 # topic list instead, so it is checked separately.
 PARAM_CONFIGS = {
     'rtabmap.yaml', 'ekf.yaml', 'explorer.yaml', 'planner.yaml', 'controller.yaml',
+    'sim_bridge.yaml',
 }
 EXPECTED_CONFIGS = PARAM_CONFIGS | {'bridge.yaml'}
 
