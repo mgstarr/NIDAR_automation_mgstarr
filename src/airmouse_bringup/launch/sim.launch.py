@@ -71,7 +71,9 @@ def launch_setup(context: LaunchContext) -> list:
     world = generate_world(arg('seed'), arg('wall_texture'))
     sdf_xml, model = drone_sdf(use_lidar)
 
-    gz_flags = '-r' if arg('gui').lower() == 'true' else '-r -s'
+    # Physics runs at 250 steps/s in real time; real_time_factor scales that (e.g. 2 = twice as fast).
+    rate = 250.0 * float(arg('real_time_factor'))
+    gz_flags = f"-r -z {rate:g}" + ('' if arg('gui').lower() == 'true' else ' -s')
     actions = [
         IncludeLaunchDescription(
             PythonLaunchDescriptionSource(str(
@@ -124,5 +126,7 @@ def generate_launch_description() -> LaunchDescription:
             description='Use the simulation clock (/clock).'),
         DeclareLaunchArgument('gui', default_value='true', description='Show the Gazebo window.'),
         DeclareLaunchArgument('rviz', default_value='true', description='Start RViz.'),
+        DeclareLaunchArgument('real_time_factor', default_value='1.0',
+                              description='Simulation speed vs real time (headless batch runs).'),
         OpaqueFunction(function=launch_setup),
     ])

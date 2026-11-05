@@ -1,4 +1,29 @@
-# RTAB-Map parameters. Mapping settings filled in Phase 2, odometry in Phase 6.
-# Parameters (PLAN.md > Parameters reference): grid_resolution, grid_height_band.
+# RTAB-Map parameters. Phase 2: mapping only, on external (ground-truth) odometry.
+# PLAN.md names -> RTAB-Map names: grid_resolution -> Grid/CellSize;
+# grid_height_band (0.2-2.2 m) -> Grid/MaxGroundHeight .. Grid/MaxObstacleHeight.
+# Set by localization.launch.py from launch arguments: subscribe_scan, Grid/Sensor.
 rtabmap:
-  ros__parameters: {}
+  ros__parameters:
+    frame_id: base_link
+    map_frame_id: map
+    subscribe_rgb: true
+    subscribe_depth: true
+    approx_sync: true              # camera (15 Hz) + LiDAR (10 Hz) + odom (50 Hz)
+    sync_queue_size: 20
+    topic_queue_size: 10
+    publish_tf: true               # map -> odom (identity while loop closure is off)
+    map_always_update: true        # republish /map every update, also while hovering
+
+    Rtabmap/DetectionRate: "2"     # map updates per second (contract: /map at 1-2 Hz)
+    Mem/IncrementalMemory: "true"  # mapping mode
+    Kp/MaxFeatures: "-1"           # no visual words -> no loop closure (exact pose in Phase 2)
+    Reg/Force3DoF: "true"          # planar map: x, y, yaw
+
+    Grid/3D: "false"               # 2D occupancy grid only
+    Grid/CellSize: "0.05"          # grid_resolution
+    Grid/RangeMax: "3.0"           # depth reliable range; same cap for the LiDAR
+    Grid/MapFrameProjection: "true"  # heights measured from the floor (map frame), not the drone
+    Grid/NormalsSegmentation: "false"
+    Grid/MaxGroundHeight: "0.2"    # grid_height_band lower edge: below = floor (free)
+    Grid/MaxObstacleHeight: "2.2"  # grid_height_band upper edge: above = ignored (net ceiling)
+    Grid/RayTracing: "true"        # mark free space between the sensor and each obstacle

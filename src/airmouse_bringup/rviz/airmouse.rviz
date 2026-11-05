@@ -11,6 +11,16 @@ Visualization Manager:
       Enabled: true
       Reference Frame: <Fixed Frame>
       Cell Size: 1
+    - Class: rviz_default_plugins/Map
+      Name: Map
+      Enabled: true
+      Topic:
+        Value: /map
+        Reliability Policy: Reliable
+        Durability Policy: Volatile
+        Depth: 1
+      Color Scheme: map
+      Alpha: 0.7
     - Class: rviz_default_plugins/TF
       Name: TF
       Enabled: true
