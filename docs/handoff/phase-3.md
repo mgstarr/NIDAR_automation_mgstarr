@@ -8,8 +8,8 @@ a test node that turns RViz goals into `/nav/path`, and a plotting tool.
 - [x] All planner tests pass (29 planner tests; 289 in the repo)
 - [x] Runtime target met: worst corner-to-corner plan 31 ms on the ≈ 310 × 310 saved maps
   (target < 50 ms), in plain Python (numba was approved as a fallback but is not needed)
-- [ ] RViz goal test works on 3 mazes (owner)
-- [ ] Tagged `phase-3`
+- [x] RViz goal test works on 3 mazes (owner confirmed 2026-11-07)
+- [x] Tagged `phase-3`
 
 ## Commands
 
