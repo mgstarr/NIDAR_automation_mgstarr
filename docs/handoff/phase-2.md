@@ -12,8 +12,8 @@ and six saved maps for offline planner tests.
   seeds 4–6 (see open issues)
 - [x] At least 5 saved maps from different seeds, LiDAR on and off: 6 maps in
   `src/airmouse_nav/test/data/maps/`
-- [ ] Owner's visual RViz check
-- [ ] Tagged `phase-2`
+- [x] Owner's visual RViz check (confirmed 2026-11-07)
+- [x] Tagged `phase-2`
 
 ## Commands
 
