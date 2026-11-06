@@ -1,6 +1,9 @@
-# A* planner parameters. Filled in Phase 3.
+# A* planner parameters (PLAN.md > Parameters reference).
 # The planner is a library, not a node: this file is loaded as an extra parameter file
 # into every node that plans (goal_planner_node, explorer_node), hence the "/**" wildcard.
-# Parameters (PLAN.md > Parameters reference): guarded_radius, safety_margin, wall_cost_weight.
 /**:
-  ros__parameters: {}
+  ros__parameters:
+    guarded_radius: 0.30     # m, drone radius including prop guards
+    safety_margin: 0.10      # m, extra clearance added to the inflation
+    wall_cost_weight: 2.0    # how strongly paths prefer corridor centres
+    wall_cost_range: 0.5     # m from a wall where the wall cost reaches 0 (Phase 3, owner approved)

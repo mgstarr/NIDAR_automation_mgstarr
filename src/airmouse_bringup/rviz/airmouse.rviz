@@ -21,6 +21,28 @@ Visualization Manager:
         Depth: 1
       Color Scheme: map
       Alpha: 0.7
+    - Class: rviz_default_plugins/Map
+      Name: Planning grid
+      Enabled: false
+      Topic:
+        Value: /nav/planning_grid
+        Reliability Policy: Reliable
+        Durability Policy: Transient Local
+        Depth: 1
+      Color Scheme: costmap
+      Alpha: 0.5
+    - Class: rviz_default_plugins/Path
+      Name: Planned path
+      Enabled: true
+      Topic:
+        Value: /nav/path
+        Reliability Policy: Reliable
+        Durability Policy: Volatile
+        Depth: 5
+      Color: 0; 200; 255
+      Line Style: Billboards
+      Line Width: 0.05
+      Pose Style: None
     - Class: rviz_default_plugins/TF
       Name: TF
       Enabled: true
