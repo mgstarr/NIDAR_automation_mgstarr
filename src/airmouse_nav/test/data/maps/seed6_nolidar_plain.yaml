@@ -1,0 +1,14 @@
+image: seed6_nolidar_plain.pgm
+mode: trinary
+resolution: 0.05000000074505806
+origin:
+- -1.1749999523162842
+- -7.72499942779541
+- 0.0
+negate: 0
+occupied_thresh: 0.65
+free_thresh: 0.196
+airmouse:
+  seed: 6
+  use_lidar: 'false'
+  wall_texture: plain

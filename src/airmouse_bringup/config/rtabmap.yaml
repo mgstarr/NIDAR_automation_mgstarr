@@ -17,7 +17,8 @@ rtabmap:
     Rtabmap/DetectionRate: "2"     # map updates per second (contract: /map at 1-2 Hz)
     Mem/IncrementalMemory: "true"  # mapping mode
     Kp/MaxFeatures: "-1"           # no visual words -> no loop closure (exact pose in Phase 2)
-    Reg/Force3DoF: "true"          # planar map: x, y, yaw
+    Reg/Force3DoF: "false"         # keep roll/pitch: the drone tilts when it accelerates, and
+                                   # dropping the tilt lifts floor points into the wall band
 
     Grid/3D: "false"               # 2D occupancy grid only
     Grid/CellSize: "0.05"          # grid_resolution
@@ -27,3 +28,5 @@ rtabmap:
     Grid/MaxGroundHeight: "0.2"    # grid_height_band lower edge: below = floor (free)
     Grid/MaxObstacleHeight: "2.2"  # grid_height_band upper edge: above = ignored (net ceiling)
     Grid/RayTracing: "true"        # mark free space between the sensor and each obstacle
+    Grid/NoiseFilteringRadius: "0.1"        # drop obstacle points with fewer than
+    Grid/NoiseFilteringMinNeighbors: "5"    # 5 neighbours within 0.1 m (depth speckle)

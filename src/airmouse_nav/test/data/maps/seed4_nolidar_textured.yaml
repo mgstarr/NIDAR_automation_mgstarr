@@ -1,0 +1,14 @@
+image: seed4_nolidar_textured.pgm
+mode: trinary
+resolution: 0.05000000074505806
+origin:
+- -1.2098785638809204
+- -7.770837306976318
+- 0.0
+negate: 0
+occupied_thresh: 0.65
+free_thresh: 0.196
+airmouse:
+  seed: 4
+  use_lidar: 'false'
+  wall_texture: textured

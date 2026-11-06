@@ -89,3 +89,13 @@ def test_missing_walls_lower_agreement() -> None:
     partial = map_io.OccupancyMap(truth.grid.copy(), truth.resolution, truth.origin)
     partial.grid[partial.grid == map_io.OCCUPIED] = map_io.FREE
     assert score_map.score(partial, truth)['wall_agreement'] == 0.0
+
+
+def test_survivors_are_not_false_walls() -> None:
+    """A mapped survivor is a real obstacle; the same block elsewhere is a false wall."""
+    truth = truth_map()
+    noisy = map_io.OccupancyMap(truth.grid.copy(), truth.resolution, truth.origin)
+    r, c = int((0.0 - truth.origin[1]) / 0.05), int((0.0 - truth.origin[0]) / 0.05)
+    noisy.grid[r - 2:r + 2, c - 2:c + 2] = map_io.OCCUPIED
+    assert score_map.score(noisy, truth, survivors=[(0.0, 0.0)])['false_wall_cells'] == 0
+    assert score_map.score(noisy, truth, survivors=[(3.0, 3.0)])['false_wall_cells'] > 0

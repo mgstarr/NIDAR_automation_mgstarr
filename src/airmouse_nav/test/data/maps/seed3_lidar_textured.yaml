@@ -1,0 +1,14 @@
+image: seed3_lidar_textured.pgm
+mode: trinary
+resolution: 0.05000000074505806
+origin:
+- -1.1938951015472412
+- -7.759506702423096
+- 0.0
+negate: 0
+occupied_thresh: 0.65
+free_thresh: 0.196
+airmouse:
+  seed: 3
+  use_lidar: 'true'
+  wall_texture: textured

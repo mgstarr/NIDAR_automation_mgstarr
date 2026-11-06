@@ -6,8 +6,8 @@ Both maps are in the map frame (origin = take-off point), so they align by their
 Metrics:
   wall_agreement: share of observed ground-truth wall faces (wall cells next to free space the
       map has seen) that have a map wall within `tolerance` metres;
-  false_wall_cells: map wall cells farther than `tolerance` from any real wall (e.g. inside a
-      corridor or doorway); false_wall_fraction = false_wall_cells / map wall cells;
+  false_wall_cells: map wall cells farther than `tolerance` from any real wall or survivor
+      (e.g. inside a corridor or doorway); false_wall_fraction = false_wall_cells / map wall cells;
   known_free_fraction: share of the real free space the map has seen.
 
 Usage:
@@ -29,6 +29,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import map_io  # noqa: E402
 
 DEFAULT_TOLERANCE = 0.10    # m; two 0.05 m cells (owner-approved, Phase 2)
+SURVIVOR_RADIUS = 0.20      # m; body radius of the generator's survivor model
 
 
 def align(occ: map_io.OccupancyMap, ref: map_io.OccupancyMap) -> tuple[np.ndarray, tuple[int, int]]:
@@ -51,8 +52,14 @@ def align(occ: map_io.OccupancyMap, ref: map_io.OccupancyMap) -> tuple[np.ndarra
 
 
 def score(occ: map_io.OccupancyMap, truth: map_io.OccupancyMap,
-          tolerance: float = DEFAULT_TOLERANCE) -> dict:
-    """Compare a map with the ground truth. See the module docstring for the metrics."""
+          tolerance: float = DEFAULT_TOLERANCE,
+          survivors: list[tuple[float, float]] | None = None) -> dict:
+    """Compare a map with the ground truth. See the module docstring for the metrics.
+
+    Args:
+        survivors: map-frame (x, y) of survivor models. They are real obstacles, so map walls
+            on them are not counted as false walls.
+    """
     m, (r0, c0) = align(occ, truth)
     gt_wall = np.zeros(m.shape, dtype=bool)
     gt_free = np.zeros(m.shape, dtype=bool)
@@ -61,8 +68,14 @@ def score(occ: map_io.OccupancyMap, truth: map_io.OccupancyMap,
     gt_free[r0:r0 + rows, c0:c0 + cols] = truth.grid == map_io.FREE
 
     res = truth.resolution
+    obstacles = gt_wall.copy()
+    if survivors:
+        rr, cc = np.indices(m.shape)
+        ox, oy = truth.origin[0] - c0 * res, truth.origin[1] - r0 * res
+        for x, y in survivors:
+            obstacles |= np.hypot(ox + (cc + 0.5) * res - x, oy + (rr + 0.5) * res - y) <= SURVIVOR_RADIUS
     map_wall, map_known = m == map_io.OCCUPIED, m != map_io.UNKNOWN
-    dist_to_gt_wall = ndimage.distance_transform_edt(~gt_wall) * res
+    dist_to_obstacle = ndimage.distance_transform_edt(~obstacles) * res
     dist_to_map_wall = ndimage.distance_transform_edt(~map_wall) * res if map_wall.any() \
         else np.full(m.shape, np.inf)
 
@@ -70,7 +83,7 @@ def score(occ: map_io.OccupancyMap, truth: map_io.OccupancyMap,
     faces = gt_wall & ndimage.binary_dilation(gt_free, structure=eight)
     observed = faces & ndimage.binary_dilation(gt_free & map_known, structure=eight)
     agreed = observed & (dist_to_map_wall <= tolerance)
-    false_walls = map_wall & (dist_to_gt_wall > tolerance)
+    false_walls = map_wall & (dist_to_obstacle > tolerance)
     n_obs, n_wall = int(observed.sum()), int(map_wall.sum())
     return {
         'wall_agreement': float(agreed.sum() / n_obs) if n_obs else 0.0,
@@ -89,7 +102,11 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument('--layout', type=Path, required=True, help='ground-truth layout.yaml')
     parser.add_argument('--tolerance', type=float, default=DEFAULT_TOLERANCE)
     args = parser.parse_args(argv)
-    print(json.dumps(score(map_io.load(args.map), map_io.load(args.layout), args.tolerance), indent=2))
+    layout_json = args.layout.with_name('layout.json')
+    survivors = ([tuple(s['position'][:2]) for s in json.loads(layout_json.read_text())['survivors']]
+                 if layout_json.exists() else None)
+    result = score(map_io.load(args.map), map_io.load(args.layout), args.tolerance, survivors)
+    print(json.dumps(result, indent=2))
     return 0
 
 
