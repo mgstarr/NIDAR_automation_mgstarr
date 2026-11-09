@@ -16,8 +16,8 @@ Public API (Phases 3 and 5):
     pg = build_planning_grid(grid, info, guarded_radius=0.30, safety_margin=0.10,
                              wall_cost_range=0.5)          # -> PlanningGrid
 
-A PlanningGrid holds `blocked` (bool: obstacle, unknown, or within guarded_radius +
-safety_margin of one) and `wall_cost` (float 0..1: 1 just outside the inflation, falling
+A PlanningGrid holds `blocked` (bool: occupied, unknown, or within guarded_radius +
+safety_margin of an occupied cell; unknown cells are not inflated) and `wall_cost` (float 0..1: 1 just outside the inflation, falling
 linearly to 0 at `wall_cost_range` metres from the nearest obstacle), plus `clearance`
 (metres to the nearest obstacle) and `components` (free-region ids, for instant "no path").
 """
@@ -125,8 +125,8 @@ def build_planning_grid(grid: np.ndarray, info: GridInfo, guarded_radius: float 
         wall_cost_range: Distance from an obstacle (m) at which the wall cost reaches 0.
 
     Returns:
-        PlanningGrid with `blocked` = obstacle, unknown or clearance < guarded_radius +
-        safety_margin, and `wall_cost` = 1 at the inflation edge falling linearly to 0 at
+        PlanningGrid with `blocked` = occupied, unknown, or clearance from occupied cells <
+        guarded_radius + safety_margin (unknown cells are not inflated), and `wall_cost` = 1 at the inflation edge falling linearly to 0 at
         `wall_cost_range` (0 everywhere if the range is not beyond the inflation radius).
 
     Raises:
@@ -135,9 +135,14 @@ def build_planning_grid(grid: np.ndarray, info: GridInfo, guarded_radius: float 
     if grid.shape != (info.rows, info.cols):
         raise ValueError(f'grid shape {grid.shape} does not match info ({info.rows}, {info.cols})')
     radius = guarded_radius + safety_margin
-    obstacles = obstacle_mask(grid)
-    clearance = clearance_map(obstacles, info.resolution)
-    blocked = obstacles | (clearance < radius - 1e-9)
+    occupied = grid >= OCCUPIED_THRESHOLD
+    unknown = grid < 0
+    # Only real (occupied) cells are inflated; unknown cells are blocked but not inflated
+    # (Phase 4, owner approved): inflating unknown space blocked the drone's own surroundings
+    # near the entry. Paths are replanned as the map grows, so walls hidden in unknown space are
+    # inflated as soon as they are seen.
+    clearance = clearance_map(occupied, info.resolution)
+    blocked = occupied | unknown | (clearance < radius - 1e-9)
     span = wall_cost_range - radius
     if span > 0:
         wall_cost = np.clip((wall_cost_range - clearance) / span, 0.0, 1.0)

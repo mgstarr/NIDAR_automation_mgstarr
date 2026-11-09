@@ -77,3 +77,13 @@ def test_shape_mismatch_raises() -> None:
     """GridInfo must match the grid."""
     with pytest.raises(ValueError):
         build_planning_grid(np.zeros((3, 3), np.int8), GridInfo(RES, 0, 0, 4, 3))
+
+
+def test_unknown_is_blocked_but_not_inflated() -> None:
+    """Unknown cells are blocked themselves; only occupied cells get the inflation band."""
+    grid = np.zeros((41, 41), np.int8)
+    grid[20, 20] = -1
+    pg = build_planning_grid(grid, GridInfo(RES, 0.0, 0.0, 41, 41), 0.30, 0.10, 0.5)
+    assert pg.blocked[20, 20]
+    assert not pg.blocked[20, 21] and not pg.blocked[19, 20]
+    assert pg.blocked.sum() == 1

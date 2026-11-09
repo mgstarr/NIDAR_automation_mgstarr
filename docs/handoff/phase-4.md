@@ -125,6 +125,12 @@ exact distance to wall cells and survivor discs).
   (`clear_unknown_around` in `goal_planner_node`). The camera cannot see within 0.3 m of
   itself, so on camera-only maps the drone's own spot was "unknown" and every plan failed with
   `start_blocked`. Phase 5 should do the same, ideally for the whole flown track.
+- **Unknown cells are blocked but no longer inflated** (`grid_utils.build_planning_grid`,
+  owner approved during the visual check). Inflating unknown space by 0.40 m left only 70
+  plannable cells near the seed-3 entry, none reachable from the drone (0/14 sampled goals).
+  Without it, 79/79 were reachable. Only occupied cells get the `guarded_radius + safety_margin`
+  band. Hidden walls are inflated once seen: the camera faces the direction of travel and paths
+  are replanned every 1 s.
 - **Planned paths start at the drone's position.** When the start is inside inflation, the
   goal planner adds the drone's position as the first point, so the move out of the band is
   part of the path.
