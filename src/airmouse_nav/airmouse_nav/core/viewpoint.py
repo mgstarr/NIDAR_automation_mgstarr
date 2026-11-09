@@ -7,7 +7,8 @@ Public API (explorer_node, grid_sim):
     d = ex.replan(grid, info, pose_xyyaw, now, seen)     # -> Decision
         d.goal: Viewpoint | None     (x, y, yaw, gain m^2, cost m, score)
         d.plan: PlanResult | None    A* path to the goal (Phase 3 library)
-        d.done: True when no reachable viewpoint has any gain left
+        d.done: True when no frontier/view cluster is left, or when the remaining clusters
+                have had no reachable viewpoint for stuck_timeout (then d.goal is None)
         d.map_clusters, d.view_clusters: frontier clusters (for RViz)
     ex.goal_reached()                                    # drop the current goal
     costs = dijkstra_costs(pg, xy, wall_cost_weight)     # travel cost (m) to every cell
@@ -205,6 +206,7 @@ class ExplorationPlanner:
         self.blacklist: list[tuple[float, float]] = []
         self.best_cost = math.inf
         self.last_progress = 0.0
+        self.no_view_since: float | None = None   # clusters exist but no viewpoint reachable
 
     def goal_reached(self) -> None:
         """Forget the current goal (its view has been taken)."""
@@ -268,10 +270,22 @@ class ExplorationPlanner:
                 self.goal, reason = None, 'better goal'
         if self.goal is None:
             if best is None:
-                return Decision(None, None, True, map_cl, view_cl, reason or 'no viewpoint left')
+                # Done only when nothing is left to see, or when what is left has been
+                # unreachable for stuck_timeout (the map may just be momentarily blocked
+                # around the drone).
+                if not map_cl and not view_cl:
+                    return Decision(None, None, True, map_cl, view_cl, 'nothing left to see')
+                if self.no_view_since is None:
+                    self.no_view_since = now
+                if now - self.no_view_since > p.stuck_timeout:
+                    return Decision(None, None, True, map_cl, view_cl,
+                                    f'{len(map_cl) + len(view_cl)} clusters left, none reachable')
+                return Decision(None, None, False, map_cl, view_cl,
+                                reason or 'no reachable viewpoint (waiting)')
             self.goal = best
             self.best_cost, self.last_progress = best.cost, now
 
+        self.no_view_since = None
         result = plan(pg, (x, y), (self.goal.x, self.goal.y), wall_cost_weight=p.wall_cost_weight)
         if not result.success:
             self.blacklist.append((self.goal.x, self.goal.y))

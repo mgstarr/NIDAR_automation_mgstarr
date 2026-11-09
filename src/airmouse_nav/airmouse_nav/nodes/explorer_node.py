@@ -387,7 +387,7 @@ class ExplorerNode(Node):
         dt = time.perf_counter() - t0
         self.publish_frontiers(dec)
         if dec.done:
-            self.get_logger().info('exploration complete: no viewpoint left')
+            self.get_logger().info(f'exploration complete: {dec.reason}')
             self.change(Trigger.EXPLORATION_DONE)
             return
         if dec.reason:
@@ -397,6 +397,9 @@ class ExplorerNode(Node):
             self.change(Trigger.BUDGET_LOW)
             return
         if dec.goal is None or dec.plan is None or not dec.plan.success:
+            # Nothing reachable right now: turn in place so the map around the drone refreshes.
+            if not self.path_points or self.controller_state in ('reached', 'idle'):
+                self.publish_path([(x, y, self.flight_altitude)] * 2, yaw + math.pi / 4)
             return
         g = dec.goal
         pts = [(px, py, self.flight_altitude) for px, py in dec.plan.path]

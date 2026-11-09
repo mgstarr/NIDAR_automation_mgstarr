@@ -74,3 +74,19 @@ def test_done_when_everything_known_and_seen() -> None:
     seen = g == 0
     d = ExplorationPlanner(P).replan(g, info, (1.0, 1.0, 0.0), 0.0, seen)
     assert d.done and d.goal is None
+
+
+def test_unreachable_clusters_wait_before_done() -> None:
+    """Clusters that exist but cannot be reached do not end exploration at once."""
+    g = np.full((40, 80), -1, np.int8)
+    g[10:31, 0:41] = 100
+    g[11:30, 1:40] = 0                     # closed room ...
+    g[11:30, 50:70] = 0                    # ... and a separate known pocket next to unknown
+    info = GridInfo(RES, 0.0, 0.0, 40, 80)
+    seen = g == 0
+    seen[11:30, 50:70] = False
+    ex = ExplorationPlanner(P)
+    d1 = ex.replan(g, info, (1.0, 1.0, 0.0), 0.0, seen)
+    assert not d1.done and d1.goal is None and 'waiting' in d1.reason
+    d2 = ex.replan(g, info, (1.0, 1.0, 0.0), P.stuck_timeout + 1.0, seen)
+    assert d2.done
