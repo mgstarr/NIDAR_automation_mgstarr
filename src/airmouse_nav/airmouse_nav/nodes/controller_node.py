@@ -4,8 +4,9 @@ Runs at `control_rate`. The command is a body-frame geometry_msgs/TwistStamped (
 base_link; linear x/y/z in m/s, angular.z = yaw rate). Path z is the target altitude; the yaw
 of the path's last pose is the goal yaw (ignored if that orientation is all zeros). An empty path means "stop and hover".
 
-Stale data: pose older than `pose_timeout`, or (while following) path older than
-`path_timeout` -> zero command and a throttled warning.
+Stale data: pose older than `pose_timeout` -> zero command and a throttled warning. Path
+older than `path_timeout` while following -> the path is dropped and the drone holds its
+current position (an empty /nav/path does the same).
 Also publishes /nav/controller_state (std_msgs/String: idle | following | reached | stale:<why>)
 for test tools.
 """
@@ -69,6 +70,7 @@ class ControllerNode(Node):
         self.pp = PurePursuit(self.params)
         self.path_time: float | None = None
         self.last_state = ''
+        self.last_pose: Pose | None = None
         self.tf_buffer = Buffer()
         self.tf_listener = TransformListener(self.tf_buffer, self)
         self.create_subscription(Path, '/nav/path', self.on_path, 10)
@@ -87,7 +89,7 @@ class ControllerNode(Node):
         stamp = Time.from_msg(msg.header.stamp).nanoseconds * 1e-9
         self.path_time = stamp if stamp > 0 else self.now()
         if not msg.poses:
-            self.pp.clear()
+            self.pp.stop(self.last_pose)   # empty path = stop and hover here
             return
         pts = [(p.pose.position.x, p.pose.position.y, p.pose.position.z) for p in msg.poses]
         self.pp.set_path(pts, path_goal_yaw(msg))
@@ -101,6 +103,7 @@ class ControllerNode(Node):
             pose_time = Time.from_msg(tf.header.stamp).nanoseconds * 1e-9
             t = tf.transform.translation
             pose = Pose(t.x, t.y, t.z, yaw_from_quaternion(tf.transform.rotation))
+            self.last_pose = pose
         except TransformException:
             pass
         stale = is_stale(now, pose_time, self.path_time, self.pose_timeout, self.path_timeout,
@@ -108,6 +111,12 @@ class ControllerNode(Node):
         cmd = TwistStamped()
         cmd.header.stamp = self.get_clock().now().to_msg()
         cmd.header.frame_id = self.robot_frame
+        if stale == 'path' and pose is not None:
+            # Path stopped arriving: hold position. (The Gazebo drone drifts on a zero velocity
+            # command; measured: it drifted into a wall in Phase 4.)
+            self.get_logger().warn('path data is stale: holding position')
+            self.pp.stop(pose)
+            stale = None
         if stale:
             state = f'stale:{stale}'
             if stale == 'path':

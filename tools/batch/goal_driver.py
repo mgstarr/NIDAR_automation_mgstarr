@@ -87,7 +87,7 @@ class Driver(Node):
         grid = grid_from_occupancy(m.data, m.info.width, m.info.height)
         info = GridInfo(m.info.resolution, m.info.origin.position.x, m.info.origin.position.y,
                         m.info.height, m.info.width)
-        from airmouse_nav.nodes.goal_planner_node import clear_unknown_around
+        from airmouse_nav.core.grid_utils import clear_unknown_around
         grid = clear_unknown_around(grid, info, pose[:2], 0.5)
         pg = build_planning_grid(grid, info)
         free = np.argwhere(~pg.blocked)

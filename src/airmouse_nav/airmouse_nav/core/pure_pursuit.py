@@ -5,7 +5,8 @@ Public API (used by controller_node; Phase 5's explorer only publishes paths):
     params = PursuitParams(flight_altitude=1.2, max_speed=0.6, max_accel=0.5, ...)
     pp = PurePursuit(params)
     pp.set_path([(x, y, z), ...], goal_yaw=None)   # new path; keeps the current velocity
-    pp.clear()                                       # no path: hover
+    pp.clear()                                       # no path, zero command
+    pp.stop(pose)                                    # no path, hold this pose (hover)
     cmd = pp.update(Pose(x, y, z, yaw), dt)          # -> Command (map frame)
     vx_b, vy_b = world_to_body(cmd.vx, cmd.vy, yaw)  # rotate into base_link
 
@@ -63,6 +64,7 @@ BRAKE_FRACTION = 0.5       # plan braking with this fraction of max_accel (cover
 HOLD_GAIN = 1.0            # 1/s: position-hold P-gain (hover at the goal, climb in place)
 HOLD_MAX_SPEED = 0.2       # m/s: position-hold speed limit
 LANDED_Z = 0.1             # m: a goal below this is a landing; no hold after it
+HOLD_MIN_Z = 0.3           # m: stop() holds position only when airborne above this
 
 
 @dataclass(frozen=True)
@@ -166,6 +168,13 @@ class PurePursuit:
         self.goal_yaw = None
         self.reached = False
         self.hold = None
+
+    def stop(self, pose: Pose | None) -> None:
+        """Drop the path and hold `pose` (hover in place). On the floor, or without a pose,
+        hold nothing (zero command)."""
+        self.clear()
+        if pose is not None and pose.z >= HOLD_MIN_Z:
+            self.hold = (pose.x, pose.y, pose.z)
 
     @property
     def active(self) -> bool:

@@ -175,3 +175,15 @@ def test_stale_pose_and_path() -> None:
     assert is_stale(10.0, None, 9.0, 0.3, 2.0, False) == 'pose'
     assert is_stale(10.0, 9.9, 7.5, 0.3, 2.0, True) == 'path'
     assert is_stale(10.0, 9.9, 7.5, 0.3, 2.0, False) is None
+
+
+def test_stop_holds_position_when_airborne() -> None:
+    """stop() drops the path and holds the given pose; on the floor it holds nothing."""
+    pp = PurePursuit(PursuitParams())
+    pp.set_path(PATHS['straight'])
+    pp.stop(Pose(1.0, 0.0, 1.2, 0.0))
+    for _ in range(60):
+        cmd = pp.update(Pose(1.1, 0.0, 1.2, 0.0), DT)
+    assert not cmd.active and cmd.vx < -0.05
+    pp.stop(Pose(1.0, 0.0, 0.05, 0.0))
+    assert pp.update(Pose(1.1, 0.0, 0.05, 0.0), DT)[:3] == (0, 0, 0)

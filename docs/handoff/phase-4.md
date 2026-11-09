@@ -10,11 +10,12 @@ Phase 4 (Pure Pursuit Controller) delivers the chain `/nav/path` → `controller
   321 of 322 repo tests pass, see the runtime note under open issues)
 - [x] 20 goals across 3 mazes reached with no wall contact: **21/21** (automated, owner
   approved; table below)
-- [x] Minimum wall clearance always above `guarded_radius` (0.30 m): **0.328 m** (worst of 3 mazes)
+- [x] Minimum wall clearance always above `guarded_radius` (0.30 m): **0.301 m** (worst of 3
+  mazes, final run after the visual-check fixes; tight, see the table)
 - [x] Take-off to 1.2 m (measured 1.23 m) and landing (0.06–0.07 m = resting on the floor) work
   through paths
-- [ ] Owner's visual RViz check
-- [ ] Tagged `phase-4`
+- [x] Owner's visual RViz check (confirmed 2026-11-09)
+- [x] Tagged `phase-4`
 
 ## Commands
 
@@ -103,9 +104,14 @@ picked at random from the live map (0.5–6 m path), then landing:
 
 | Maze | Goals reached | Min wall clearance | Tracking error p95 / mean (max) |
 |---|---|---|---|
-| seed 1, plain, LiDAR | 7/7 | 0.328 m | 0.143 / 0.041 m (0.249) |
-| seed 3, textured, LiDAR | 7/7 | 0.363 m | 0.116 / 0.030 m (0.202) |
-| seed 5, plain, camera only | 7/7 | 0.431 m | 0.023 / 0.008 m (0.108) |
+| seed 1, plain, LiDAR | 7/7 | 0.337 m | 0.149 / 0.045 m (0.212) |
+| seed 3, textured, LiDAR | 7/7 | 0.301 m | 0.146 / 0.046 m (0.229) |
+| seed 5, plain, camera only | 7/7 | 0.421 m | 0.025 / 0.007 m (0.086) |
+
+Final code (after the visual-check fixes). An earlier run, before those fixes, gave 0.328 /
+0.363 / 0.431 m. **0.301 m is only 1 mm above the guarded radius.** With the 0.10 m safety
+margin, the drone's centre can stray ~0.1 m off the path's centre strip near corners.
+Phase 7 should watch this (benchmark over 20+ mazes); a slower corner speed is the knob.
 
 Tracking error is measured against the latest `/nav/path`, which is replanned every second.
 Its maximum includes moments right after a replan, when the new path starts at a cell
@@ -125,12 +131,16 @@ exact distance to wall cells and survivor discs).
   (`clear_unknown_around` in `goal_planner_node`). The camera cannot see within 0.3 m of
   itself, so on camera-only maps the drone's own spot was "unknown" and every plan failed with
   `start_blocked`. Phase 5 should do the same, ideally for the whole flown track.
-- **Unknown cells are blocked but no longer inflated** (`grid_utils.build_planning_grid`,
-  owner approved during the visual check). Inflating unknown space by 0.40 m left only 70
-  plannable cells near the seed-3 entry, none reachable from the drone (0/14 sampled goals).
-  Without it, 79/79 were reachable. Only occupied cells get the `guarded_radius + safety_margin`
-  band. Hidden walls are inflated once seen: the camera faces the direction of travel and paths
-  are replanned every 1 s.
+- **Unknown cells stay inflated like walls.** During the owner's visual check, inflation of
+  unknown space was briefly removed, because clicks near the entry failed. The re-run then had
+  a camera-only path pass 0.14 m from a wall hidden in unknown space, and the drone touched it
+  (clearance 0.300 m). So it was restored. The entry problem was really (a) no look-around
+  (now `fly_path.py look`) and (b) clicks inside the band (now moved to the nearest safe spot).
+- **Stale or empty path → hold position.** `PurePursuit.stop(pose)` holds the pose when
+  airborne (> 0.3 m). The Gazebo drone drifts on a zero-velocity command: in one run it drifted
+  into a wall after the goal planner's replans failed and the path went stale.
+  `goal_planner_node` also moves the goal to the nearest safe spot on every replan, and drops
+  it (empty path = stop and hold) after 3 failed replans in a row.
 - **Clicked goals inside the safety band move to the nearest safe cell within 0.5 m**
   (`goal_planner_node` only, owner approved during the visual check; `astar.plan` still
   returns `goal_blocked`).

@@ -35,10 +35,12 @@ from std_msgs.msg import String
 from tf2_ros import Buffer, TransformException, TransformListener
 
 from airmouse_nav.core.astar import plan
-from airmouse_nav.core.grid_utils import GridInfo, build_planning_grid, grid_from_occupancy
+from airmouse_nav.core.grid_utils import (GridInfo, build_planning_grid,  # noqa: F401
+                                          clear_unknown_around, grid_from_occupancy)
 
 NODE_NAME = 'goal_planner_node'
 GOAL_SNAP_RADIUS = 0.5   # m: a clicked goal near a wall moves to the nearest safe cell
+MAX_REPLAN_FAILURES = 3  # consecutive failed replans before the goal is dropped
 
 
 def nearest_safe(pg, xy: tuple[float, float], radius: float) -> tuple[float, float] | None:
@@ -61,21 +63,6 @@ def nearest_safe(pg, xy: tuple[float, float], radius: float) -> tuple[float, flo
     return cell_to_world(info, int(cells[k, 0] + r0), int(cells[k, 1] + c0))
 
 
-def clear_unknown_around(grid: np.ndarray, info: GridInfo, xy: tuple[float, float],
-                         radius: float) -> np.ndarray:
-    """Copy of `grid` with unknown cells within `radius` of the drone marked free.
-
-    The drone is physically there, so that space is free; the camera cannot see within 0.3 m
-    of itself, so without this a camera-only map leaves the drone's own spot unknown (=
-    blocked) after take-off. Known obstacles are never cleared.
-    """
-    rows, cols = np.ogrid[0:info.rows, 0:info.cols]
-    cx = info.origin_x + (cols + 0.5) * info.resolution
-    cy = info.origin_y + (rows + 0.5) * info.resolution
-    near = (cx - xy[0]) ** 2 + (cy - xy[1]) ** 2 <= radius ** 2
-    out = grid.copy()
-    out[near & (grid < 0)] = 0
-    return out
 
 
 def transform_xy(tf, x: float, y: float, z: float = 0.0) -> tuple[float, float]:
@@ -109,6 +96,7 @@ class GoalPlannerNode(Node):
         self.replan_period = self.declare_parameter('replan_period', 1.0).value
         self.goal: tuple[float, float, float] | None = None   # map-frame x, y, yaw
         self.controller_state = ''
+        self.failures = 0
 
         self.tf_buffer = Buffer()
         self.tf_listener = TransformListener(self.tf_buffer, self)
@@ -196,13 +184,13 @@ class GoalPlannerNode(Node):
                                  self.wall_cost_range)
         t1 = time.perf_counter()
         moved = ''
-        if first:
-            snapped = nearest_safe(pg, goal, GOAL_SNAP_RADIUS)
-            if snapped is not None and snapped != goal:
-                moved = (f' (goal moved {math.dist(goal, snapped):.2f} m from '
-                         f'({goal[0]:.2f}, {goal[1]:.2f}) to the nearest safe spot)')
-                goal = snapped
-                self.goal = (goal[0], goal[1], self.goal[2])
+        # Every replan: the goal may fall inside the band as the map fills in.
+        snapped = nearest_safe(pg, goal, GOAL_SNAP_RADIUS)
+        if snapped is not None and snapped != goal:
+            moved = (f' (goal moved {math.dist(goal, snapped):.2f} m from '
+                     f'({goal[0]:.2f}, {goal[1]:.2f}) to the nearest safe spot)')
+            goal = snapped
+            self.goal = (goal[0], goal[1], self.goal[2])
         result = plan(pg, start, goal, wall_cost_weight=self.wall_cost_weight)
         t2 = time.perf_counter()
         if first:
@@ -212,13 +200,16 @@ class GoalPlannerNode(Node):
         timing = f'grid {1e3 * (t1 - t0):.0f} ms, A* {1e3 * (t2 - t1):.0f} ms'
         if not result.success:
             self.get_logger().warn(f'no path {where}: {result.reason} ({timing})')
-            if first:
+            self.failures = 0 if first else self.failures + 1
+            if first or self.failures >= MAX_REPLAN_FAILURES:
+                self.get_logger().warn('goal dropped')
                 self.goal = None
-                self.path_pub.publish(self.make_path([]))   # clears the old path
-            return   # replan failure: keep the last path; the controller times it out
+                self.path_pub.publish(self.make_path([]))   # stop: the drone holds position
+            return
         points = list(result.path)
         if result.start_snapped:
             points.insert(0, start)   # include the short move out of the inflation
+        self.failures = 0
         self.path_pub.publish(self.make_path(points))
         if first:
             snapped = ', start moved out of inflation' if result.start_snapped else ''
