@@ -99,3 +99,17 @@ def test_survivors_are_not_false_walls() -> None:
     noisy.grid[r - 2:r + 2, c - 2:c + 2] = map_io.OCCUPIED
     assert score_map.score(noisy, truth, survivors=[(0.0, 0.0)])['false_wall_cells'] == 0
     assert score_map.score(noisy, truth, survivors=[(3.0, 3.0)])['false_wall_cells'] > 0
+
+
+def test_clearance_exact_distance(tmp_path) -> None:
+    """Clearance measures the distance to the nearest wall cell edge and survivor disc."""
+    import json
+    from clearance import Clearance
+    grid = np.zeros((40, 40), np.int8)
+    grid[:, 0] = 100                         # wall cells x in [0, 0.05)
+    map_io.save(tmp_path / "layout", map_io.OccupancyMap(grid, 0.05, (0.0, 0.0)))
+    (tmp_path / 'layout.json').write_text(json.dumps(
+        {'survivors': [{'position': [1.5, 1.0, 0.0]}]}))
+    cl = Clearance(tmp_path)
+    assert cl.at(0.55, 1.0) == pytest.approx(0.50)
+    assert cl.at(1.0, 1.0) == pytest.approx(0.30)     # survivor edge at 1.30

@@ -10,6 +10,9 @@ Offline helper scripts that are not ROS nodes. Added phase by phase (see `docs/P
 | `score_map.py` | 2 | Compare a saved map with the maze generator's ground truth |
 | `survey_flight.py` | 2 | Sim test tool: fly a tour of every maze cell (true layout + pose) |
 | `plot_plan.py` | 3 | Plot a map with its inflation, wall cost and planned path |
+| `fly_path.py` | 4 | Take off / land through a vertical `/nav/path` |
+| `clearance.py` | 4 | Minimum wall clearance during a run (ground truth + layout) |
+| `batch/goal_run.sh`, `goal_batch.sh`, `goal_driver.py` | 4 | Automated goal test: take-off, look-around, N goals, landing |
 | `grid_sim.py` | 5 | Fast pure-Python exploration simulator (no Gazebo) |
 | `pose_error.py` | 6 | Estimated pose vs ground truth (drift) |
 | `benchmark.py` | 7 | Headless Gazebo runs over many seeds and modes |

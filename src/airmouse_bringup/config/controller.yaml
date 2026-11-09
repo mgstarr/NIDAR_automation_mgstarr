@@ -1,6 +1,22 @@
-# Controller node (pure pursuit -> /nav/cmd_vel_raw). Filled in Phase 4.
-# Parameters (PLAN.md > Parameters reference): flight_altitude, max_speed, max_accel,
-# max_yaw_rate, lookahead_min, lookahead_max, goal_tolerance_xy, goal_tolerance_yaw,
-# pose_timeout, path_timeout, control_rate.
-controller_node:
-  ros__parameters: {}
+# Controller parameters (PLAN.md > Parameters reference). Shared with every node that needs a
+# limit or the flight altitude (controller_node, safety_hook_node, goal_planner_node), hence
+# the "/**" wildcard.
+/**:
+  ros__parameters:
+    flight_altitude: 1.2         # m, cruise height
+    max_speed: 0.6               # m/s, horizontal speed limit
+    max_accel: 0.5               # m/s^2
+    max_yaw_rate: 0.8            # rad/s
+    lookahead_min: 0.3           # m
+    lookahead_max: 0.8           # m
+    goal_tolerance_xy: 0.15      # m (also used for altitude)
+    goal_tolerance_yaw: 10.0     # degrees
+    pose_timeout: 0.3            # s
+    path_timeout: 2.0            # s
+    control_rate: 30.0           # Hz
+    # Phase 4 additions (owner approved)
+    yaw_gain: 1.5                # 1/s, heading P-gain
+    altitude_gain: 1.0           # 1/s, altitude P-gain
+    max_vertical_speed: 0.3      # m/s, climb / descent limit
+    max_yaw_accel: 0.5           # rad/s^2, yaw-rate slew limit (Gazebo drops the drone on
+                                 # sudden yaw reversals; ramps up to 1.0 measured safe)

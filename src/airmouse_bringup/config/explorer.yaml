@@ -5,3 +5,9 @@
 # return_reserve, return_safety_factor, localization_lost_timeout, arena_bounds.
 explorer_node:
   ros__parameters: {}
+# Geofence (read by safety_hook_node from Phase 4). [xmin, xmax, ymin, ymax] in the map frame.
+# In simulation navigation.launch.py overrides it from the generated maze's layout.json;
+# on site, measure the arena and set it here.
+safety_hook_node:
+  ros__parameters:
+    arena_bounds: [-0.6, 13.8, -7.2, 7.2]
