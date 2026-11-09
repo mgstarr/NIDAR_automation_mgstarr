@@ -131,6 +131,9 @@ exact distance to wall cells and survivor discs).
   Without it, 79/79 were reachable. Only occupied cells get the `guarded_radius + safety_margin`
   band. Hidden walls are inflated once seen: the camera faces the direction of travel and paths
   are replanned every 1 s.
+- **Clicked goals inside the safety band move to the nearest safe cell within 0.5 m**
+  (`goal_planner_node` only, owner approved during the visual check; `astar.plan` still
+  returns `goal_blocked`).
 - **Planned paths start at the drone's position.** When the start is inside inflation, the
   goal planner adds the drone's position as the first point, so the move out of the band is
   part of the path.

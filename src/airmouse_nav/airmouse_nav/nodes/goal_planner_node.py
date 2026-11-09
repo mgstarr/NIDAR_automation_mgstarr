@@ -3,6 +3,8 @@
 From Phase 4 the goal stays active: the node replans from the drone's current position every
 `replan_period` s (so the path stays fresh for the controller's path_timeout and follows the
 growing map) until the controller reports "reached" with the drone within goal_tolerance_xy.
+A clicked goal inside the safety band (or on unknown) moves to the nearest safe cell within
+0.5 m (owner approved in Phase 4; the planner library still refuses blocked goals).
 Path z = flight_altitude; the last pose carries the clicked goal yaw. Unknown cells within
 guarded_radius + safety_margin + 0.1 m of the drone count as free (the drone is there).
 
@@ -36,6 +38,27 @@ from airmouse_nav.core.astar import plan
 from airmouse_nav.core.grid_utils import GridInfo, build_planning_grid, grid_from_occupancy
 
 NODE_NAME = 'goal_planner_node'
+GOAL_SNAP_RADIUS = 0.5   # m: a clicked goal near a wall moves to the nearest safe cell
+
+
+def nearest_safe(pg, xy: tuple[float, float], radius: float) -> tuple[float, float] | None:
+    """Centre of the nearest unblocked cell within `radius` of xy (xy itself if free)."""
+    from airmouse_nav.core.grid_utils import cell_to_world, in_bounds, world_to_cell
+    info = pg.info
+    r, c = world_to_cell(info, *xy)
+    if in_bounds(info, r, c) and not pg.blocked[r, c]:
+        return xy
+    reach = int(math.ceil(radius / info.resolution))
+    r0, c0 = max(0, r - reach), max(0, c - reach)
+    window = ~pg.blocked[r0:r + reach + 1, c0:c + reach + 1]
+    cells = np.argwhere(window)
+    if cells.size == 0:
+        return None
+    d2 = (cells[:, 0] + r0 - r) ** 2 + (cells[:, 1] + c0 - c) ** 2
+    k = int(np.argmin(d2))
+    if d2[k] * info.resolution ** 2 > radius ** 2:
+        return None
+    return cell_to_world(info, int(cells[k, 0] + r0), int(cells[k, 1] + c0))
 
 
 def clear_unknown_around(grid: np.ndarray, info: GridInfo, xy: tuple[float, float],
@@ -172,6 +195,14 @@ class GoalPlannerNode(Node):
         pg = build_planning_grid(grid, info, self.guarded_radius, self.safety_margin,
                                  self.wall_cost_range)
         t1 = time.perf_counter()
+        moved = ''
+        if first:
+            snapped = nearest_safe(pg, goal, GOAL_SNAP_RADIUS)
+            if snapped is not None and snapped != goal:
+                moved = (f' (goal moved {math.dist(goal, snapped):.2f} m from '
+                         f'({goal[0]:.2f}, {goal[1]:.2f}) to the nearest safe spot)')
+                goal = snapped
+                self.goal = (goal[0], goal[1], self.goal[2])
         result = plan(pg, start, goal, wall_cost_weight=self.wall_cost_weight)
         t2 = time.perf_counter()
         if first:
@@ -192,7 +223,7 @@ class GoalPlannerNode(Node):
         if first:
             snapped = ', start moved out of inflation' if result.start_snapped else ''
             self.get_logger().info(f'path {where}: {result.length:.2f} m, '
-                                   f'{len(result.path)} points ({timing}{snapped})')
+                                   f'{len(result.path)} points ({timing}{snapped}){moved}')
 
     def make_path(self, points: list[tuple[float, float]]) -> Path:
         """nav_msgs/Path at flight altitude; headings along the path, goal yaw at the end."""
