@@ -1,13 +1,23 @@
-# Explorer node: frontiers, camera coverage, viewpoints and the mission state machine.
-# Filled in Phase 5.
-# Parameters (PLAN.md > Parameters reference): replan_period, camera_hfov, coverage_range,
-# min_cluster_size, gain_weight, goal_switch_margin, stuck_timeout, mission_time_limit,
-# return_reserve, return_safety_factor, localization_lost_timeout, arena_bounds.
+# Explorer node: frontiers, camera coverage, viewpoints and the mission state machine (Phase 5).
+# Parameters (PLAN.md > Parameters reference) + Phase 5 additions (owner approved).
 explorer_node:
-  ros__parameters: {}
-# Geofence (read by safety_hook_node from Phase 4). [xmin, xmax, ymin, ymax] in the map frame.
-# In simulation navigation.launch.py overrides it from the generated maze's layout.json;
-# on site, measure the arena and set it here.
+  ros__parameters:
+    replan_period: 1.0               # s
+    camera_hfov: 87.0                # degrees
+    coverage_range: 2.5              # m, how far the camera counts as "seeing"
+    min_cluster_size: 6              # cells (0.3 m of cells at 0.05 m)
+    gain_weight: 1.0                 # m of travel per m^2 of newly seen area
+    goal_switch_margin: 0.2          # a new goal must score 20% better to replace the current one
+    stuck_timeout: 10.0              # s without progress -> blacklist the goal
+    mission_time_limit: 1800.0       # s (30 min)
+    return_reserve: 120.0            # s kept spare when deciding to return
+    return_safety_factor: 1.5        # x estimated home travel time
+    localization_lost_timeout: 3.0   # s without a pose -> ABORT
+    landing_time: 15.0               # s, used in the return budget (Phase 5, owner approved)
+    large_map_change: 0.02           # replan early when known cells change by > 2%
+    # [xmin, xmax, ymin, ymax]; in simulation the launch files override it from the maze.
+    arena_bounds: [-0.6, 13.8, -7.2, 7.2]
+# Geofence for the safety hook (read since Phase 4).
 safety_hook_node:
   ros__parameters:
     arena_bounds: [-0.6, 13.8, -7.2, 7.2]

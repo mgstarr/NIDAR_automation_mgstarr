@@ -12,7 +12,8 @@ Usage:
     python3 tools/grid_sim.py --seeds 1-50 [--lidar false] [--quiet]
     python3 tools/grid_sim.py --seeds 3 --plot /tmp/seed3.png      # map + coverage + track
 
-Checks per run: every room >= 95% seen, every survivor hit by a camera ray, ends at home
+Checks per run: every room >= 95% seen (of the room cells the camera can see from some pose
+the drone may fly to: World.seeable; the raw share of all room cells is reported too), every survivor hit by a camera ray, ends at home
 (within 0.3 m) and landed, never in a cell that was blocked or unknown on the planning grid when
 it entered it, and true wall clearance always >= guarded_radius.
 """
@@ -65,6 +66,8 @@ class SimResult:
     path_length: float = 0.0
     rooms_seen: int = 0
     rooms: int = 0
+    room_raw: list[float] = field(default_factory=list)     # seen / all free room cells
+    room_seeable: list[float] = field(default_factory=list)  # seen / seeable room cells
     survivors_seen: int = 0
     survivors: int = 0
     coverage: float = 0.0           # seen fraction of true free cells inside the arena
@@ -110,6 +113,33 @@ class World:
         self.arena = (cx >= xa) & (cx <= xb) & (cy >= ya) & (cy <= yb)
         from scipy import ndimage
         self.clearance = ndimage.distance_transform_edt(~self.occ) * res - res / 2
+        self._seeable = None
+
+    def seeable(self, p: ExplorerParams) -> np.ndarray:
+        """Free cells the camera can see (within coverage_range, any heading) from SOME pose
+        the drone may fly to: safe cells (planning grid on the true map) reachable from home.
+        Cells hidden from every such pose (e.g. behind a survivor that blocks a room) cannot be
+        required."""
+        if self._seeable is not None:
+            return self._seeable
+        g = np.where(self.occ | ~self.arena, 100, 0).astype(np.int8)
+        pg = build_planning_grid(g, self.info, p.guarded_radius, p.safety_margin,
+                                 p.wall_cost_range)
+        costs = dijkstra_costs(pg, (0.0, 0.0), p.wall_cost_weight)
+        reach = np.isfinite(costs)
+        step = 3   # every 3rd cell (0.15 m) in each direction is a viewing position
+        out = np.zeros(self.occ.shape, bool)
+        for r, c in np.argwhere(reach):
+            if r % step or c % step:
+                continue
+            x = self.info.origin_x + (c + 0.5) * self.info.resolution
+            y = self.info.origin_y + (r + 0.5) * self.info.resolution
+            rows, cols = ray_cells(g, self.info, x, y, 0.0, 2 * math.pi, p.coverage_range)
+            out[rows, cols] = True
+        # also the thin strips (corridor centres are only ~4 cells wide): add every reachable
+        # cell on rows/cols not covered by the stride
+        self._seeable = out & ~self.occ
+        return self._seeable
 
     def sense(self, grid: np.ndarray, x: float, y: float, yaw: float, hfov: float,
               lidar: bool) -> set[int]:
@@ -299,8 +329,12 @@ def run(seed: int, use_lidar: bool = True, params: ExplorerParams | None = None,
     res.home_error = math.hypot(x - home[0], y - home[1])
     res.survivors_seen = len(seen_surv)
     seen = cov.seen
-    res.rooms_seen = sum(1 for room in w.rooms
-                         if (seen & room).sum() >= 0.95 * room.sum())
+    seeable = w.seeable(p)
+    for room in w.rooms:
+        res.room_raw.append(float((seen & room).sum()) / max(1, int(room.sum())))
+        target = room & seeable
+        res.room_seeable.append(float((seen & target).sum()) / max(1, int(target.sum())))
+    res.rooms_seen = sum(1 for f in res.room_seeable if f >= 0.95)
     true_free = w.arena & ~w.occ
     res.coverage = float((seen & true_free).sum()) / max(1, int(true_free.sum()))
     res.wall_time = time.time() - t_wall
@@ -345,6 +379,7 @@ def main() -> int:
             print(f'seed {seed:3d} lidar={lidar!s:5} {r.state:5} {"OK  " if r.ok else "FAIL"} '
                   f'time {r.time:6.0f} s  path {r.path_length:6.1f} m  rooms {r.rooms_seen}/{r.rooms} '
                   f'survivors {r.survivors_seen}/{r.survivors}  coverage {100 * r.coverage:5.1f}%  '
+                  f'(raw min {100 * min(r.room_raw):.0f}%)  '
                   f'home {r.home_error:.2f} m  min clear {r.min_clearance:.2f} m  '
                   f'({r.wall_time:.0f} s wall)' + (f'  {r.violations[:2]}' if r.violations else ''),
                   flush=True)

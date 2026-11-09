@@ -43,9 +43,12 @@ def launch_setup(context, *args, **kwargs) -> list:
     if seed:
         safety.append({'arena_bounds': arena_bounds(
             seed, LaunchConfiguration('wall_texture').perform(context))})
-    return [
-        Node(package='airmouse_nav', executable='goal_planner_node', name='goal_planner_node',
-             output='screen', parameters=files + [common]),
+    nodes = []
+    if LaunchConfiguration('goal_planner').perform(context).lower() == 'true':
+        nodes.append(Node(package='airmouse_nav', executable='goal_planner_node',
+                          name='goal_planner_node', output='screen',
+                          parameters=files + [common]))
+    return nodes + [
         Node(package='airmouse_nav', executable='controller_node', name='controller_node',
              output='screen', parameters=files + [common]),
         Node(package='airmouse_nav', executable='safety_hook_node', name='safety_hook_node',
@@ -75,5 +78,8 @@ def generate_launch_description() -> LaunchDescription:
         DeclareLaunchArgument(
             'wall_texture', default_value='plain',
             description='Sim only: wall texture of the maze (plain or textured).'),
+        DeclareLaunchArgument(
+            'goal_planner', default_value='true',
+            description='Start the RViz goal planner test node (false in mission.launch.py).'),
         OpaqueFunction(function=launch_setup),
     ])
