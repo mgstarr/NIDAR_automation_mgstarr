@@ -58,6 +58,7 @@ NODE_NAME = 'explorer_node'
 TICK = 0.1                 # s
 LOOK_STEPS = 4             # look-around: four 90-degree turns
 ABORT_HOLD = 2.0           # s of hover before landing in place
+TURN_TIMEOUT = 8.0         # s: give up a turn-on-arrival that does not finish
 HOME_SNAP_RADIUS = 0.6     # m: land this close to home if the home cell itself is blocked
 
 
@@ -122,6 +123,7 @@ class ExplorerNode(Node):
         self.next_replan = 0.0
         self.look_step = 0
         self.turning_to: float | None = None
+        self.turn_started = 0.0
         self.home_costs = None
         self.home_costs_t = -math.inf
         self.seen_following = False
@@ -198,6 +200,7 @@ class ExplorerNode(Node):
                 self.get_logger().info('localization recovered: resuming')
                 self.loc_bad_since = None
                 self.path_points, self.next_replan = [], 0.0
+                self.turning_to = None        # an interrupted turn-on-arrival is dropped
             return True
         if self.loc_bad_since is None:
             self.loc_bad_since = self.now()
@@ -419,7 +422,7 @@ class ExplorerNode(Node):
         if self.map_msg is None or self.coverage is None:
             return
         if self.turning_to is not None:          # no-LiDAR mode: turn on arrival
-            if reached:
+            if reached or self.now() - self.turn_started > TURN_TIMEOUT:
                 self.turning_to = None
                 self.explorer.goal_reached()
                 self.next_replan = 0.0
@@ -427,6 +430,7 @@ class ExplorerNode(Node):
         if reached and self.path_points:
             if not self.use_lidar and self.explorer.goal is not None:
                 self.turning_to = self.explorer.goal.yaw
+                self.turn_started = self.now()
                 self.publish_path([(x, y, self.flight_altitude)] * 2, self.turning_to)
                 return
             self.explorer.goal_reached()

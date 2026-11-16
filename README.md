@@ -61,3 +61,54 @@ rviz2                 # an RViz window
 | `src/airmouse_bringup` | all launch files, all parameter files, RViz layout |
 | `src/airmouse_nav` | navigation algorithms (`core/`), ROS 2 nodes, flight-controller bridges, tests |
 | `tools/` | offline scripts: map scoring, plotting, benchmarks |
+
+## Run a full mission (navigation + mapping + survivor detection)
+
+```bash
+# Terminal 1: everything in one command (Gazebo, RViz, mapping, explorer, controller, detector)
+ros2 launch airmouse_bringup mission.launch.py seed:=1 use_ground_truth:=true
+# Terminal 2: start the mission
+ros2 service call /mission/start std_srvs/srv/Trigger
+```
+
+- `use_ground_truth:=false` (the default) runs on the drone's own localization (LiDAR scan
+  matching + EKF + RTAB-Map). Camera-only localization (`use_lidar:=false`) is not reliable yet.
+- RViz shows the map, the planned path, frontiers, camera coverage and the **Survivor
+  detection** image (camera frames with boxes around detected survivors).
+- Status per phase: [docs/handoff/](docs/handoff/).
+
+## Project structure
+
+```
+.devcontainer/            Docker dev container (ROS 2 Jazzy, Gazebo Harmonic, PyTorch CPU, Ultralytics)
+docs/
+  PLAN.md                 master plan (single source of truth)
+  phases/phase-N.md       the phase documents
+  handoff/phase-N.md      what each phase delivered, results, open issues
+external/
+  NIDAR-Automation/       detection team's repository, copied as-is (snapshot of
+                          github.com/AryanGoyal17/NIDAR-Automation at a49d362): YOLO11n training,
+                          evaluation, detector CLI and models/survivor_yolo11n_demo.pt
+src/
+  airmouse_description/   the simulated world: maze generator (human-shaped survivors), drone model
+  airmouse_bringup/       launch files, all YAML configuration, RViz layout
+    launch/               sim, localization, navigation, detection, mission (all-in-one), rviz
+    config/               rtabmap, ekf, planner, controller, explorer, detection, bridge
+  airmouse_nav/           navigation
+    core/                 pure Python, no ROS: grid_utils, astar, pure_pursuit, frontier,
+                          coverage, viewpoint, mission
+    nodes/                explorer_node (mission + exploration), controller_node,
+                          safety_hook_node, goal_planner_node (RViz click test tool)
+    bridges/              sim_bridge (Gazebo adapter), range_to_z (height for the EKF),
+                          fc_bridge (flight-controller hook, not built yet)
+  airmouse_detection/     ROS 2 wrapper around the detection team's model:
+                          camera -> YOLO11n -> /detection/survivors, /detection/image, /detection/json
+tools/                    offline tools and test runners (see tools/README.md)
+  batch/                  headless mission runs and exit-test batches
+```
+
+Data flow: camera, LiDAR, IMU and rangefinders → **localization** (RTAB-Map odometry + EKF →
+`/odom`; RTAB-Map → `/map`) → **explorer** (frontiers, coverage, next viewpoint, A*) →
+`/nav/path` → **controller** (pure pursuit) → **safety hook** → `/cmd_vel` → drone. In parallel:
+camera → **survivor detector** → `/detection/*`. Not built yet: placing detected survivors on
+the map (tagging).

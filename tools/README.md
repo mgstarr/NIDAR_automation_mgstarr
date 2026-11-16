@@ -13,6 +13,10 @@ Offline helper scripts that are not ROS nodes. Added phase by phase (see `docs/P
 | `fly_path.py` | 4 | Take off / land through a vertical `/nav/path` |
 | `clearance.py` | 4 | Minimum wall clearance during a run (ground truth + layout) |
 | `batch/goal_run.sh`, `goal_batch.sh`, `goal_driver.py` | 4 | Automated goal test: take-off, look-around, N goals, landing |
-| `grid_sim.py` | 5 | Fast pure-Python exploration simulator (no Gazebo) |
+| `grid_sim.py` | 5 | Fast pure-Python mission simulator (no Gazebo) |
+| `mission_report.py` | 5 | Score a recorded Gazebo mission against ground truth (coverage, survivors seen and detected) |
+| `batch/mission_run.sh`, `phase56_batch.sh`, `grid_sim_batch.sh`, `slam_trial.sh` | 5–6 | Headless mission runs, exit batches, SLAM tuning trials |
+| `check_contract.py` | 6 | Contract topics alive + TF chain complete |
+| `cpu_usage.py` | 6 | CPU and memory per stack node |
 | `pose_error.py` | 6 | Estimated pose vs ground truth (drift) |
 | `benchmark.py` | 7 | Headless Gazebo runs over many seeds and modes |
