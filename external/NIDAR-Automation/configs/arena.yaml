@@ -1,0 +1,176 @@
+# ==============================================================================
+# NIDAR AirMouse — Arena & Camera Simulation Configuration
+# ==============================================================================
+# Single source of truth for all synthetic data generation, PyBullet simulation,
+# and camera rendering pipelines.
+#
+# Values marked with "# ASSUMPTION" are working engineering estimates that
+# must be confirmed against rulebook specifications and team hardware.
+# See docs/arena_questions.md for the team verification checklist.
+#
+# All spatial units are in SI metres; angles are in degrees.
+# Colors are normalized RGB floats in [0.0, 1.0].
+# ==============================================================================
+
+# --- Arena Physical Structure ------------------------------------------------
+arena:
+  # Corridor clear passage width (metres)
+  corridor_width: 1.5           # ASSUMPTION: Standard indoor drone competition corridor
+
+  # Boundary and partition wall height (metres)
+  wall_height: 2.0              # ASSUMPTION: 2.0m partition wall height
+
+  # Wall thickness for collision and rendering (metres)
+  wall_thickness: 0.1           # ASSUMPTION: 10cm partition thickness
+
+  # Room dimensions inside the maze (metres)
+  rooms:
+    default_width: 3.0          # ASSUMPTION: 3.0m square rooms along corridors
+    default_length: 3.0         # ASSUMPTION: 3.0m square rooms along corridors
+    min_size: 2.0               # ASSUMPTION: Smallest search alcove
+    max_size: 4.5               # ASSUMPTION: Largest central room
+
+  # Enclosure & ceiling configuration
+  ceiling:
+    present: true               # ASSUMPTION: Fully enclosed indoor test facility
+    height: 3.0                 # ASSUMPTION: 3.0m ceiling above floor plane
+    color_rgb: [0.85, 0.85, 0.85] # ASSUMPTION: Off-white ceiling panels
+
+  # Wall appearance and materials
+  walls:
+    color_rgb: [0.80, 0.80, 0.78] # ASSUMPTION: Light grey/beige plywood or drywall
+    texture: "flat_matte"       # ASSUMPTION: Matte paint finish (no strong specular glint)
+
+  # Floor appearance and materials
+  floor:
+    color_rgb: [0.45, 0.45, 0.47] # ASSUMPTION: Medium-grey smooth industrial concrete
+    texture: "concrete"         # ASSUMPTION: Smooth concrete slab
+
+# --- Lighting Conditions -----------------------------------------------------
+lighting:
+  # Diffuse ambient light intensity (RGB components in [0.0, 1.0])
+  ambient_rgb: [0.35, 0.35, 0.35] # ASSUMPTION: Moderate indoor diffuse ambient lighting
+
+  # Primary directional light source (overhead fixtures)
+  directional_color_rgb: [0.90, 0.90, 0.85] # ASSUMPTION: Warm-white fluorescent/LED
+  directional_direction: [0.1, 0.2, 1.0]    # ASSUMPTION: Vector pointing toward overhead light source [x, y, z]
+
+  # Specular light reflection coefficient in [0.0, 1.0]
+  specular_coeff: 0.1           # ASSUMPTION: Low-specularity matte indoor surfaces
+
+  # Cast shadow simulation
+  cast_shadows: true            # ASSUMPTION: Survivors cast ground contact shadows
+
+# --- Drone Camera Sensor -----------------------------------------------------
+camera:
+  # Camera mounting height above ground during nominal cruise (metres)
+  height: 0.8                   # ASSUMPTION: Nominal flight altitude in 2.0m corridors
+
+  # Downward tilt angle relative to horizontal forward axis (degrees)
+  # 0 deg = horizontal forward-facing; 90 deg = pure nadir (straight down)
+  tilt_deg: 30.0                # ASSUMPTION: 30-degree downward angle for floor search
+
+  # Sensor resolution in pixels (width x height)
+  resolution:
+    width: 1280                 # ASSUMPTION: 720p HD capture resolution
+    height: 720                 # ASSUMPTION: 720p HD capture resolution
+
+  # Optical field of view (degrees)
+  fov:
+    horizontal_deg: 85.0        # ASSUMPTION: Standard wide-angle drone lens (~85 deg H-FOV)
+    vertical_deg: 54.0          # ASSUMPTION: Matches 16:9 aspect ratio at 85 deg H-FOV
+
+  # Rendering clipping planes (metres)
+  near_clip: 0.1                # ASSUMPTION: 10cm minimum focus plane
+  far_clip: 15.0                # ASSUMPTION: 15m maximum sightline inside maze
+
+  # Frame acquisition rate
+  fps: 30                       # ASSUMPTION: Standard camera stream frame rate
+
+# --- Camera Pose Sampling (sim/trajectory.py) --------------------------------
+trajectory:
+  # Minimum 3D distance from the camera eye to any survivor's 3D box (metres)
+  survivor_clearance_m: 0.35        # ASSUMPTION: no rulebook value; keeps the camera off and out of bodies
+
+  # Reject a pose when one survivor's projected 3D box covers more than this
+  # fraction of the image (too close for a useful frame)
+  max_survivor_box_fraction: 0.5    # ASSUMPTION: no measured basis yet
+
+  # generate_sequence (replay and tracking tests only; training frames come
+  # from sample_poses)
+  min_sequence_frames: 20           # ASSUMPTION: about one 1.5 m cell at 0.08 m steps
+  rotate_in_place: true             # ASSUMPTION: at a survivor block, add in-place yaw frames
+  rotate_yaw_step_deg: 10           # ASSUMPTION: yaw step per in-place frame (degrees)
+  rotate_max_frames: 12             # ASSUMPTION: at most 12 in-place frames (120 degrees)
+
+# --- Training Labels (sim/labels.py) -----------------------------------------
+labels:
+  # Pixel thresholds below are at training resolution: the frame letterboxed
+  # to imgsz, scale = imgsz / max(width, height). sim/labels.py converts them
+  # to the render size (at 1280x720 the scale is 0.325, at 640x360 0.65).
+  imgsz: 416                        # Decision (CLAUDE.md section 4): fine-tuned models train at 416
+
+  # Drop a label whose visible box is shorter / narrower than this (px at imgsz).
+  # Width is lower than height: a standing person at range is narrow.
+  min_box_height_px: 10             # ASSUMPTION: no measured detector limit yet
+  min_box_width_px: 6               # ASSUMPTION: no measured detector limit yet
+
+  # A survivor with less visible area than this (px^2 at imgsz) counts as not
+  # in the frame: no label, not dropped, frame not ambiguous
+  presence_min_area_px: 1.6         # ASSUMPTION: about the old 15 px floor at 1280x720 (15.1 px; 3.8 px at 640x360)
+
+  # Drop a label when more than this share of the survivor's full silhouette
+  # lies outside the frame (measured from a survivor-alone render)
+  max_truncation: 0.85              # ASSUMPTION: previous code default; to be revisited with training results
+
+  # Drop a label when more than this share of the survivor's in-frame
+  # silhouette is hidden (walls, clutter, other survivors)
+  max_occlusion: 0.90               # ASSUMPTION: previous code default; to be revisited with training results
+
+  # Largest survivor-alone canvas, as a multiple of the frame area. A survivor
+  # needing more is rendered on the capped canvas and its truncation is only a
+  # lower bound (label dropped as truncation_unbounded)
+  max_canvas_area_factor: 4.0       # ASSUMPTION: above the measured p95 (2.42) of 256 protocol poses at 1280x720
+
+  # Visibility, measured on the frame after augmentation: contrast = largest
+  # per-channel |mean(survivor pixels) - mean(ring around them)|, grey levels.
+  # Ring width in px at imgsz (9 px at 1280x720, 5 px at 640x360).
+  contrast_ring_px: 3               # ASSUMPTION: not tuned
+  # Drop only essentially invisible survivors (frame becomes ambiguous). On the
+  # 256-frame protocol plus a forced low-light set (1 Nov 2026), 26 of the 27
+  # size-passing low-light survivors under 3.0 were invisible by eye, 1 faint;
+  # the lowest normal-light contrast was 7.4 (clearly visible).
+  min_contrast: 3.0                 # ASSUMPTION: chosen by eye from crops sorted by contrast
+  # Keep, but tag as "hard" (metadata only): low-light crops from about 4 to 8
+  # were hard to see, from about 8 up dim but clearly visible.
+  hard_contrast: 8.0                # ASSUMPTION: chosen by eye from crops sorted by contrast
+
+# --- Survivor (Target) Specifications ----------------------------------------
+survivor:
+  # Physical target nature ("human", "mannequin", or "dummy")
+  target_type: "human"          # ASSUMPTION: Real human volunteers or life-size mannequins
+
+  # Maximum number of survivors to be distributed throughout the maze
+  max_count: 6                  # Rulebook specification (up to 6 survivors per run)
+
+  # Physical dimensions (metres)
+  dimensions:
+    height_m: 1.75              # ASSUMPTION: Typical adult stature
+    shoulder_width_m: 0.45      # ASSUMPTION: Adult biacromial shoulder breadth
+    torso_depth_m: 0.25         # ASSUMPTION: Chest-to-back thickness
+
+  # Incapacitated postures to simulate
+  postures:
+    - "lying_supine"            # On back, face up
+    - "lying_prone"             # On stomach, face down
+    - "lying_lateral"           # On side (recovery position)
+    - "sitting_against_wall"    # Slumped sitting against corridor wall
+    - "collapsed_kneeling"      # Incapacitated forward slump
+
+  # Civilian clothing color variations for synthetic randomisation (RGB lists)
+  clothing_color_palette:
+    - [0.15, 0.25, 0.55]        # Navy / blue denim
+    - [0.70, 0.15, 0.15]        # Red jacket / shirt
+    - [0.20, 0.45, 0.25]        # Dark green
+    - [0.25, 0.25, 0.25]        # Charcoal grey
+    - [0.85, 0.80, 0.70]        # Light khaki

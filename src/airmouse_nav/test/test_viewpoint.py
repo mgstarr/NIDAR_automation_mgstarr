@@ -90,3 +90,15 @@ def test_unreachable_clusters_wait_before_done() -> None:
     assert not d1.done and d1.goal is None and 'waiting' in d1.reason
     d2 = ex.replan(g, info, (1.0, 1.0, 0.0), P.stuck_timeout + 1.0, seen)
     assert d2.done
+
+
+def test_reached_viewpoint_is_not_picked_again() -> None:
+    """After goal_reached(), the same pose is not chosen even if its gain did not materialise."""
+    g, info = corridor_with_unknown_room()
+    ex = ExplorationPlanner(P)
+    seen = g == 0
+    a = ex.replan(g, info, (0.5, 1.5, 0.0), 0.0, seen).goal
+    ex.goal_reached()
+    b = ex.replan(g, info, (a.x, a.y, a.yaw), 1.0, seen).goal
+    assert b is None or math.hypot(b.x - a.x, b.y - a.y) >= 0.3 or \
+        abs(math.remainder(b.yaw - a.yaw, 2 * math.pi)) >= math.radians(30)

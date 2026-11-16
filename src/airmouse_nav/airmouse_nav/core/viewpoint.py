@@ -27,6 +27,8 @@ How a replan works:
   5. Commitment: the current goal is kept (re-scored) unless it was reached, became invalid
      (blocked, unreachable or no gain left) or a new candidate beats its score by
      goal_switch_margin (fraction of |score|).
+     A reached viewpoint is remembered; candidates within VISITED_RADIUS and VISITED_ANGLE of
+     it are never taken again. Cells nearer than camera_min_range give no gain.
   6. Stuck: if the travel cost to the goal has not dropped by PROGRESS_STEP within
      stuck_timeout, the goal is blacklisted (no candidates within BLACKLIST_RADIUS) and dropped.
   7. A* plans the path to the chosen goal only.
@@ -50,6 +52,8 @@ from airmouse_nav.core.grid_utils import (GridInfo, PlanningGrid, build_planning
 
 PROGRESS_STEP = 0.1       # m of travel cost that counts as progress (stuck rule)
 BLACKLIST_RADIUS = 0.3    # m around a blacklisted goal where no candidate is taken
+VISITED_RADIUS = 0.3      # m: a candidate this close to a visited viewpoint ...
+VISITED_ANGLE = math.radians(30.0)   # ... with a heading this close is not taken again
 
 
 @dataclass(frozen=True)
@@ -70,6 +74,7 @@ class ExplorerParams:
     wall_cost_weight: float = 2.0
     wall_cost_range: float = 0.5
     clear_radius: float = 0.5                 # unknown within this of the drone counts as free
+    camera_min_range: float = 0.3             # m: cells nearer than this are not seen (no gain)
 
 
 @dataclass
@@ -151,7 +156,10 @@ def view_gain(grid: np.ndarray, info: GridInfo, target: np.ndarray, x: float, y:
               yaw: float, p: ExplorerParams) -> float:
     """m^2 of target cells visible from (x, y, yaw)."""
     rows, cols = ray_cells(grid, info, x, y, yaw, p.camera_hfov, p.coverage_range)
-    return float(target[rows, cols].sum()) * info.resolution ** 2
+    d2 = ((info.origin_x + (cols + 0.5) * info.resolution - x) ** 2
+          + (info.origin_y + (rows + 0.5) * info.resolution - y) ** 2)
+    far = d2 >= p.camera_min_range ** 2
+    return float(target[rows[far], cols[far]].sum()) * info.resolution ** 2
 
 
 def sample_candidates(cluster: Cluster, info: GridInfo, pg: PlanningGrid, costs: np.ndarray,
@@ -207,10 +215,19 @@ class ExplorationPlanner:
         self.best_cost = math.inf
         self.last_progress = 0.0
         self.no_view_since: float | None = None   # clusters exist but no viewpoint reachable
+        self.visited: list[tuple[float, float, float]] = []   # viewpoints already taken
 
     def goal_reached(self) -> None:
-        """Forget the current goal (its view has been taken)."""
+        """The current goal's view has been taken: remember it (never re-pick the same
+        pose: its predicted gain may not have materialised) and forget the goal."""
+        if self.goal is not None:
+            self.visited.append((self.goal.x, self.goal.y, self.goal.yaw))
         self.goal = None
+
+    def _was_visited(self, v: Viewpoint) -> bool:
+        return any(math.hypot(v.x - x, v.y - y) < VISITED_RADIUS
+                   and abs(math.remainder(v.yaw - yaw, 2 * math.pi)) < VISITED_ANGLE
+                   for x, y, yaw in self.visited)
 
     def _score(self, v: Viewpoint, grid, info, target, costs, yaw_now) -> Viewpoint:
         r, c = world_to_cell(info, v.x, v.y)
@@ -242,7 +259,8 @@ class ExplorationPlanner:
 
         def best_allowed() -> Viewpoint | None:
             ok = [v for v in cands if all(math.hypot(v.x - bx, v.y - by) >= BLACKLIST_RADIUS
-                                          for bx, by in self.blacklist)]
+                                          for bx, by in self.blacklist)
+                  and not self._was_visited(v)]
             return max(ok, key=lambda v: (v.score, -v.x, -v.y)) if ok else None
 
         best = best_allowed()

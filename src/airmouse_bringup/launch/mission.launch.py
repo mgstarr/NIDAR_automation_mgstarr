@@ -28,6 +28,7 @@ ARGS = {
     'gui': ('true', 'Show the Gazebo window (false = headless).'),
     'rviz': ('true', 'Start RViz.'),
     'real_time_factor': ('1.0', 'Simulation speed (1.0 = real time).'),
+    'detection': ('true', 'Start the survivor detector (airmouse_detection).'),
 }
 
 
@@ -64,7 +65,8 @@ def launch_setup(context, *args, **kwargs) -> list:
                                          'wall_texture': a['wall_texture'],
                                          'goal_planner': 'false'}),
         explorer,
-    ]
+    ] + ([include('detection.launch.py', {'use_sim_time': a['use_sim_time']})]
+         if a['detection'] == 'true' else [])
 
 
 def generate_launch_description() -> LaunchDescription:

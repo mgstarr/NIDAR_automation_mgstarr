@@ -1,0 +1,680 @@
+"""
+sim/camera.py — Pinhole camera simulator for NIDAR synthetic data
+================================================================
+
+Simulates a drone-mounted pinhole camera inside PyBullet environments using
+physical camera parameters (resolution, FOV, clipping planes, tilt) loaded
+from ``configs/arena.yaml``.
+
+Features:
+- Configurable pose: ``(x, y, z, yaw, pitch, roll)`` in world coordinates.
+- Uses ``p.computeViewMatrix``, ``p.computeProjectionMatrixFOV``, and
+  ``p.getCameraImage``.
+- Default renderer: CPU TinyRenderer (``p.ER_TINY_RENDERER``).
+- Output format:
+  - BGR uint8 array of shape ``(H, W, 3)`` ready for OpenCV.
+  - Linear depth buffer float32 array of shape ``(H, W)``.
+  - Segmentation mask int32 array of shape ``(H, W)`` (flags:
+    ``p.ER_SEGMENTATION_MASK_OBJECT_AND_LINKINDEX``).
+- Built-in FPS benchmarking tool.
+- Projection of a world-frame 3D box to an image rectangle (``project_aabb``,
+  ``project_box``, ``projected_box_fraction``), using the same axes as
+  rendering (``camera_axes``).
+- Segmentation-only render on a canvas extended by a margin on each side, with
+  the same focal length in pixels (``render_segmentation``): the central
+  ``height x width`` crop is pixel-identical to the frame.
+
+Coordinate conventions:
+- World axes: x = East/rightward, y = North/forward, z = Upward (ROS 2 REP 103).
+- Yaw: Heading in degrees around the z-axis (0 deg = facing +x East; 90 deg = +y North).
+- Pitch: Elevation/tilt in degrees. Negative values represent downward tilt
+  towards the ground (e.g. -30.0 deg for nominal arena downward search angle).
+- Roll: Rotation around the camera optical / forward axis in degrees.
+
+Usage (CLI smoke test & benchmark)::
+
+    python -m sim.camera
+    python -m sim.camera --frames 30 --width 640 --height 360
+
+Programmatic::
+
+    from sim.camera import PinholeCamera, CameraPose
+    cam = PinholeCamera()
+    bgr, depth, seg = cam.render(CameraPose(x=2.25, y=2.25, z=0.8, yaw=90.0, pitch=-30.0))
+"""
+
+from __future__ import annotations
+
+import argparse
+import math
+import time
+from dataclasses import dataclass
+from pathlib import Path
+from typing import NamedTuple
+
+import numpy as np
+import pybullet as p
+
+from cv.config import load_config
+
+DEFAULT_ARENA_CONFIG = Path("configs/arena.yaml")
+
+
+# --------------------------------------------------------------------------- #
+# Data structures
+# --------------------------------------------------------------------------- #
+@dataclass
+class CameraPose:
+    """Camera mounting pose in world coordinates."""
+
+    x: float
+    """World x position in metres (East / rightward)."""
+
+    y: float
+    """World y position in metres (North / forward)."""
+
+    z: float
+    """World z altitude in metres above ground."""
+
+    yaw: float = 0.0
+    """Heading angle in degrees (0 = East, 90 = North)."""
+
+    pitch: float = -30.0
+    """Pitch angle in degrees. Negative is tilted downwards (e.g. -30 deg)."""
+
+    roll: float = 0.0
+    """Roll / bank angle in degrees."""
+
+    def as_tuple(self) -> tuple[float, float, float, float, float, float]:
+        """Return (x, y, z, yaw, pitch, roll)."""
+        return (self.x, self.y, self.z, self.yaw, self.pitch, self.roll)
+
+
+class RenderOutput(NamedTuple):
+    """Output tuple returned by camera render."""
+
+    bgr: np.ndarray
+    """OpenCV-compatible BGR image (uint8, shape HxWx3)."""
+
+    depth: np.ndarray
+    """Depth buffer values in [0.0, 1.0] (float32, shape HxW)."""
+
+    seg_mask: np.ndarray
+    """PyBullet segmentation mask (int32, shape HxW)."""
+
+
+# --------------------------------------------------------------------------- #
+# Camera axes
+# --------------------------------------------------------------------------- #
+# Box corner c has bits (x, y, z) = (c & 4, c & 2, c & 1): set means the max side.
+_BOX_CORNER_BITS = np.array([[(c >> 2) & 1, (c >> 1) & 1, c & 1] for c in range(8)], dtype=bool)
+# The 12 box edges: corner pairs differing in exactly one bit.
+_BOX_EDGES = np.array([(c, c | bit) for c in range(8) for bit in (4, 2, 1) if not c & bit])
+
+
+def camera_axes(
+    pose: CameraPose | tuple[float, float, float, float, float, float],
+) -> tuple[tuple[float, float, float], np.ndarray, np.ndarray]:
+    """
+    Eye position, forward unit vector and up unit vector of a camera pose.
+
+    Shared by :meth:`PinholeCamera.compute_view_matrix` and the box projection
+    so both use identical axes.
+    """
+    if isinstance(pose, tuple):
+        x, y, z, yaw, pitch, roll = pose
+    else:
+        x, y, z, yaw, pitch, roll = pose.as_tuple()
+
+    yaw_rad = math.radians(yaw)
+    pitch_rad = math.radians(pitch)
+    roll_rad = math.radians(roll)
+
+    # Forward unit vector in world space:
+    # yaw=0 -> +x, yaw=90 -> +y.
+    # pitch < 0 tilts downward towards ground (-z).
+    cp = math.cos(pitch_rad)
+    sp = math.sin(pitch_rad)
+    cy = math.cos(yaw_rad)
+    sy = math.sin(yaw_rad)
+
+    fwd = np.array([cp * cy, cp * sy, sp], dtype=np.float64)
+    fwd_norm = np.linalg.norm(fwd)
+    if fwd_norm > 1e-8:
+        fwd /= fwd_norm
+
+    # Nominal up vector before roll
+    # If camera points horizontally (pitch=0), up is [0, 0, 1].
+    # If camera pitches down (pitch=-theta), up tilts forward [sp*cy, sp*sy, -cp].
+    up_nominal = np.array([-sp * cy, -sp * sy, cp], dtype=np.float64)
+    up_norm = np.linalg.norm(up_nominal)
+    if up_norm > 1e-8:
+        up_nominal /= up_norm
+
+    # Camera right vector = fwd x up
+    right = np.cross(fwd, up_nominal)
+    right_norm = np.linalg.norm(right)
+    if right_norm > 1e-8:
+        right /= right_norm
+
+    # Apply roll rotation around optical axis (fwd)
+    cr = math.cos(roll_rad)
+    sr = math.sin(roll_rad)
+    up = cr * up_nominal + sr * right
+
+    return (x, y, z), fwd, up
+
+
+# --------------------------------------------------------------------------- #
+# Pinhole Camera
+# --------------------------------------------------------------------------- #
+class PinholeCamera:
+    """
+    Simulated pinhole camera for rendering PyBullet scenes.
+
+    Parameters
+    ----------
+    arena_config_path : str or Path
+        Path to arena YAML configuration.
+    width : int, optional
+        Override capture width in pixels.
+    height : int, optional
+        Override capture height in pixels.
+    vertical_fov_deg : float, optional
+        Override vertical field of view in degrees.
+    near_clip : float, optional
+        Override near clipping plane distance in metres.
+    far_clip : float, optional
+        Override far clipping plane distance in metres.
+    renderer : int
+        PyBullet renderer flag (default: ``p.ER_TINY_RENDERER``).
+    """
+
+    def __init__(
+        self,
+        arena_config_path: str | Path = DEFAULT_ARENA_CONFIG,
+        width: int | None = None,
+        height: int | None = None,
+        vertical_fov_deg: float | None = None,
+        near_clip: float | None = None,
+        far_clip: float | None = None,
+        renderer: int = p.ER_TINY_RENDERER,
+    ) -> None:
+        cfg = load_config(arena_config_path)
+        cam_cfg = cfg.camera
+
+        self.width: int = width if width is not None else int(cam_cfg.resolution.width)
+        self.height: int = height if height is not None else int(cam_cfg.resolution.height)
+        self.vertical_fov_deg: float = (
+            vertical_fov_deg if vertical_fov_deg is not None else float(cam_cfg.fov.vertical_deg)
+        )
+        self.near_clip: float = near_clip if near_clip is not None else float(cam_cfg.near_clip)
+        self.far_clip: float = far_clip if far_clip is not None else float(cam_cfg.far_clip)
+        self.default_tilt_deg: float = float(cam_cfg.tilt_deg)
+        self.default_height: float = float(cam_cfg.height)
+        self.renderer: int = renderer
+
+        # Lighting parameters loaded from configs/arena.yaml
+        light_cfg = getattr(cfg, "lighting", None)
+        if light_cfg is not None:
+            self.ambient_coeff: float = float(np.mean(light_cfg.ambient_rgb))
+            self.directional_color: list[float] = [
+                float(c) for c in light_cfg.directional_color_rgb
+            ]
+            self.directional_direction: list[float] = [
+                float(d) for d in light_cfg.directional_direction
+            ]
+            self.cast_shadows: bool = bool(light_cfg.cast_shadows)
+            self.specular_coeff: float = float(getattr(light_cfg, "specular_coeff", 0.1))
+        else:
+            self.ambient_coeff = 0.35
+            self.directional_color = [0.90, 0.90, 0.85]
+            self.directional_direction = [0.1, 0.2, 1.0]
+            self.cast_shadows = True
+            self.specular_coeff = 0.1
+
+        # Precompute projection matrix
+        self.aspect_ratio: float = self.width / float(self.height)
+        self.projection_matrix: list[float] = list(
+            p.computeProjectionMatrixFOV(
+                fov=self.vertical_fov_deg,
+                aspect=self.aspect_ratio,
+                nearVal=self.near_clip,
+                farVal=self.far_clip,
+            )
+        )
+
+    # -- Pose & Matrix Computation --
+
+    def compute_view_matrix(
+        self,
+        pose: CameraPose | tuple[float, float, float, float, float, float],
+    ) -> list[float]:
+        """
+        Compute PyBullet 4x4 view matrix from camera pose.
+
+        Parameters
+        ----------
+        pose : CameraPose or 6-tuple
+            (x, y, z, yaw, pitch, roll) where angles are in degrees.
+        """
+        (x, y, z), fwd, up = camera_axes(pose)
+        eye = [float(x), float(y), float(z)]
+        target = [float(x + fwd[0]), float(y + fwd[1]), float(z + fwd[2])]
+        up_list = [float(up[0]), float(up[1]), float(up[2])]
+
+        view_mat = p.computeViewMatrix(
+            cameraEyePosition=eye,
+            cameraTargetPosition=target,
+            cameraUpVector=up_list,
+        )
+        return list(view_mat)
+
+    # -- Box Projection --
+
+    def project_aabb(
+        self,
+        pose: CameraPose | tuple[float, float, float, float, float, float],
+        aabb: tuple[tuple[float, float, float], tuple[float, float, float]],
+        clip: bool = True,
+    ) -> tuple[float, float, float, float] | None:
+        """
+        Image-space bounding rectangle of a world-frame axis-aligned box.
+
+        The box is clipped at the near plane (its 12 edges are cut where they
+        cross it), projected with the same axes and FOV as :meth:`render`, and
+        the rectangle is clipped to the image. Walls and other bodies are
+        ignored (no occlusion).
+
+        Conservative: for a rotated or non-box body the AABB is larger than the
+        body, so the rectangle can be larger than the body's real silhouette
+        box (never smaller, up to pixel rounding).
+
+        Parameters
+        ----------
+        clip : bool
+            If False, the rectangle is not clipped to the image and can extend
+            beyond it (or lie fully outside it).
+
+        Returns
+        -------
+        (x1, y1, x2, y2) in float pixels, origin top-left, or None if no part
+        of the box is in front of the camera (or, with ``clip``, inside the
+        image).
+        """
+        lo = np.asarray(aabb[0], dtype=np.float64)
+        hi = np.asarray(aabb[1], dtype=np.float64)
+        return self.project_box(pose, np.where(_BOX_CORNER_BITS, hi, lo), clip=clip)
+
+    def project_box(
+        self,
+        pose: CameraPose | tuple[float, float, float, float, float, float],
+        corners: np.ndarray,
+        clip: bool = True,
+    ) -> tuple[float, float, float, float] | None:
+        """
+        Image-space bounding rectangle of a world-frame box given by its corners.
+
+        Like :meth:`project_aabb` but for any box, including a rotated one.
+        ``corners`` is an (8, 3) array; corner c is the max side along the
+        box's local x, y, z axes where bits (c & 4, c & 2, c & 1) are set.
+        """
+        eye, basis = self._view_basis(pose)
+        return self._project_corners_in_view(eye, basis, np.asarray(corners, np.float64), clip)
+
+    def projected_box_fraction(
+        self,
+        pose: CameraPose | tuple[float, float, float, float, float, float],
+        aabb: tuple[tuple[float, float, float], tuple[float, float, float]],
+    ) -> float:
+        """
+        Fraction of the image covered by :meth:`project_aabb` (0.0 to 1.0).
+
+        Conservative for rotated bodies (see :meth:`project_aabb`).
+        """
+        return self.projected_box_fractions(pose, [aabb])[0]
+
+    def projected_box_fractions(
+        self,
+        pose: CameraPose | tuple[float, float, float, float, float, float],
+        boxes: list[tuple[tuple[float, float, float], tuple[float, float, float]]],
+    ) -> list[float]:
+        """:meth:`projected_box_fraction` for several boxes seen from one pose."""
+        eye, basis = self._view_basis(pose)
+        image_area = float(self.width * self.height)
+        fractions = []
+        for aabb in boxes:
+            rect = self._project_aabb_in_view(eye, basis, aabb)
+            if rect is None:
+                fractions.append(0.0)
+            else:
+                x1, y1, x2, y2 = rect
+                fractions.append((x2 - x1) * (y2 - y1) / image_area)
+        return fractions
+
+    @staticmethod
+    def _view_basis(
+        pose: CameraPose | tuple[float, float, float, float, float, float],
+    ) -> tuple[np.ndarray, np.ndarray]:
+        """Eye and 3x3 world-to-camera rows (x right, y up, depth) from camera_axes."""
+        (x, y, z), fwd, up = camera_axes(pose)
+        f0, f1, f2 = fwd.tolist()
+        u0, u1, u2 = up.tolist()
+        # Same basis as gluLookAt / p.computeViewMatrix: side = fwd x up, cam_up = side x fwd.
+        s0, s1, s2 = f1 * u2 - f2 * u1, f2 * u0 - f0 * u2, f0 * u1 - f1 * u0
+        norm = math.sqrt(s0 * s0 + s1 * s1 + s2 * s2)
+        s0, s1, s2 = s0 / norm, s1 / norm, s2 / norm
+        c0, c1, c2 = s1 * f2 - s2 * f1, s2 * f0 - s0 * f2, s0 * f1 - s1 * f0
+        eye = np.array([x, y, z], dtype=np.float64)
+        return eye, np.array([[s0, s1, s2], [c0, c1, c2], [f0, f1, f2]], dtype=np.float64)
+
+    def _project_aabb_in_view(
+        self,
+        eye: np.ndarray,
+        basis: np.ndarray,
+        aabb: tuple[tuple[float, float, float], tuple[float, float, float]],
+    ) -> tuple[float, float, float, float] | None:
+        """:meth:`project_aabb` with a precomputed view basis."""
+        lo = np.asarray(aabb[0], dtype=np.float64)
+        hi = np.asarray(aabb[1], dtype=np.float64)
+        return self._project_corners_in_view(eye, basis, np.where(_BOX_CORNER_BITS, hi, lo))
+
+    def _project_corners_in_view(
+        self,
+        eye: np.ndarray,
+        basis: np.ndarray,
+        corners: np.ndarray,
+        clip: bool = True,
+    ) -> tuple[float, float, float, float] | None:
+        """:meth:`project_box` with a precomputed view basis."""
+        cam = (corners - eye) @ basis.T
+
+        # Keep corners in front of the near plane, plus the points where box
+        # edges cross it.
+        depth = cam[:, 2] - self.near_clip
+        pts = cam[depth >= 0.0]
+        ea, eb = _BOX_EDGES[:, 0], _BOX_EDGES[:, 1]
+        crossing = (depth[ea] < 0.0) != (depth[eb] < 0.0)
+        if crossing.any():
+            a, b = ea[crossing], eb[crossing]
+            t = depth[a] / (depth[a] - depth[b])
+            pts = np.vstack([pts, cam[a] + t[:, None] * (cam[b] - cam[a])])
+        if len(pts) == 0:
+            return None
+
+        tan_v = math.tan(math.radians(self.vertical_fov_deg) / 2.0)
+        ndc_x = pts[:, 0] / (pts[:, 2] * tan_v * self.aspect_ratio)
+        ndc_y = pts[:, 1] / (pts[:, 2] * tan_v)
+        u = (ndc_x + 1.0) * 0.5 * self.width
+        v = (1.0 - ndc_y) * 0.5 * self.height
+
+        if not clip:
+            return (float(u.min()), float(v.min()), float(u.max()), float(v.max()))
+        x1, x2 = max(float(u.min()), 0.0), min(float(u.max()), float(self.width))
+        y1, y2 = max(float(v.min()), 0.0), min(float(v.max()), float(self.height))
+        if x2 <= x1 or y2 <= y1:
+            return None
+        return (x1, y1, x2, y2)
+
+    # -- Rendering --
+
+    def render(
+        self,
+        pose: CameraPose | tuple[float, float, float, float, float, float],
+        physics_client: int | None = None,
+        light_direction: list[float] | None = None,
+        light_color: list[float] | None = None,
+        light_distance: float | None = None,
+        ambient_coeff: float | None = None,
+        diffuse_coeff: float | None = None,
+        specular_coeff: float | None = None,
+        shadow: int | bool | None = None,
+    ) -> RenderOutput:
+        """
+        Capture a frame at the specified camera pose.
+
+        Parameters
+        ----------
+        pose : CameraPose or 6-tuple
+            (x, y, z, yaw, pitch, roll).
+        physics_client : int, optional
+            Physics client ID. If None, default active PyBullet client is used.
+        light_direction : list[float], optional
+            Override directional light vector [x, y, z].
+        light_color : list[float], optional
+            Override light color [r, g, b].
+        light_distance : float, optional
+            Override light distance from scene center.
+        ambient_coeff : float, optional
+            Override ambient light intensity.
+        diffuse_coeff : float, optional
+            Override diffuse light intensity.
+        specular_coeff : float, optional
+            Override specular reflection intensity.
+        shadow : int or bool, optional
+            Override shadow casting flag (0/False or 1/True).
+
+        Returns
+        -------
+        RenderOutput
+            NamedTuple with:
+            - bgr: np.ndarray (H, W, 3) uint8 (OpenCV BGR)
+            - depth: np.ndarray (H, W) float32
+            - seg_mask: np.ndarray (H, W) int32
+        """
+        view_mat = self.compute_view_matrix(pose)
+
+        use_shadow = int(bool(shadow)) if shadow is not None else (1 if self.cast_shadows else 0)
+
+        kwargs = {
+            "width": self.width,
+            "height": self.height,
+            "viewMatrix": view_mat,
+            "projectionMatrix": self.projection_matrix,
+            "renderer": self.renderer,
+            "flags": p.ER_SEGMENTATION_MASK_OBJECT_AND_LINKINDEX,
+            "lightDirection": (
+                light_direction if light_direction is not None else self.directional_direction
+            ),
+            "lightColor": light_color if light_color is not None else self.directional_color,
+            "lightAmbientCoeff": (
+                ambient_coeff if ambient_coeff is not None else self.ambient_coeff
+            ),
+            "lightDiffuseCoeff": diffuse_coeff if diffuse_coeff is not None else 0.65,
+            "lightSpecularCoeff": (
+                float(specular_coeff) if specular_coeff is not None else self.specular_coeff
+            ),
+            "shadow": use_shadow,
+        }
+        if light_distance is not None:
+            kwargs["lightDistance"] = float(light_distance)
+        if physics_client is not None:
+            kwargs["physicsClientId"] = physics_client
+
+        w, h, rgba, depth_buf, seg_buf = p.getCameraImage(**kwargs)
+
+        # Convert RGBA -> BGR uint8
+        rgba_arr = np.reshape(rgba, (h, w, 4)).astype(np.uint8)
+        bgr_arr = rgba_arr[:, :, [2, 1, 0]]  # RGBA to BGR
+
+        # Depth buffer
+        depth_arr = np.reshape(depth_buf, (h, w)).astype(np.float32)
+
+        # Segmentation mask
+        seg_arr = np.reshape(seg_buf, (h, w)).astype(np.int32)
+
+        return RenderOutput(bgr=bgr_arr, depth=depth_arr, seg_mask=seg_arr)
+
+    @property
+    def focal_length_px(self) -> float:
+        """Focal length in pixels (square pixels, principal point at the image centre)."""
+        return (self.height / 2.0) / math.tan(math.radians(self.vertical_fov_deg) / 2.0)
+
+    def canvas_projection_matrix(self, margins: tuple[int, int, int, int]) -> list[float]:
+        """
+        Projection matrix for a canvas extended by ``(left, top, right, bottom)`` pixels.
+
+        The focal length in pixels and the pixel grid are those of the frame,
+        so the frame is the canvas crop ``[top:top + height, left:left + width]``.
+        """
+        left, top, right, bottom = margins
+        k = self.near_clip / self.focal_length_px
+        return list(
+            p.computeProjectionMatrix(
+                left=-(self.width / 2.0 + left) * k,
+                right=(self.width / 2.0 + right) * k,
+                bottom=-(self.height / 2.0 + bottom) * k,
+                top=(self.height / 2.0 + top) * k,
+                nearVal=self.near_clip,
+                farVal=self.far_clip,
+            )
+        )
+
+    def render_segmentation(
+        self,
+        pose: CameraPose | tuple[float, float, float, float, float, float],
+        physics_client: int | None = None,
+        margins: tuple[int, int, int, int] = (0, 0, 0, 0),
+    ) -> np.ndarray:
+        """
+        Segmentation mask on a canvas extended by ``(left, top, right, bottom)`` pixels.
+
+        Same pose, focal length in pixels and pixel grid as :meth:`render`
+        (shadows off, lighting irrelevant). The crop
+        ``[top:top + height, left:left + width]`` is the frame's mask; the
+        margins show what lies outside the frame.
+
+        Returns
+        -------
+        np.ndarray
+            int32 array of shape ``(height + top + bottom, width + left + right)``,
+            encoded like :attr:`RenderOutput.seg_mask`.
+        """
+        left, top, right, bottom = (int(m) for m in margins)
+        if min(left, top, right, bottom) < 0:
+            raise ValueError(f"margins must be >= 0, got {margins}")
+        w = self.width + left + right
+        h = self.height + top + bottom
+        kwargs = {
+            "width": w,
+            "height": h,
+            "viewMatrix": self.compute_view_matrix(pose),
+            "projectionMatrix": self.canvas_projection_matrix((left, top, right, bottom)),
+            "renderer": self.renderer,
+            "flags": p.ER_SEGMENTATION_MASK_OBJECT_AND_LINKINDEX,
+            "shadow": 0,
+        }
+        if physics_client is not None:
+            kwargs["physicsClientId"] = physics_client
+        seg_buf = p.getCameraImage(**kwargs)[4]
+        return np.reshape(np.asarray(seg_buf, dtype=np.int32), (h, w))
+
+    # -- Benchmarking --
+
+    def benchmark(
+        self,
+        num_frames: int = 50,
+        pose: CameraPose | None = None,
+        physics_client: int | None = None,
+    ) -> float:
+        """
+        Benchmark camera rendering and print frames per second (FPS).
+
+        Parameters
+        ----------
+        num_frames : int
+            Number of iterations to render.
+        pose : CameraPose, optional
+            Test pose. Defaults to nominal arena cruise pose.
+        physics_client : int, optional
+            PyBullet client ID.
+
+        Returns
+        -------
+        float
+            Rendered frames per second (FPS).
+        """
+        if pose is None:
+            pose = CameraPose(
+                x=1.5,
+                y=1.5,
+                z=self.default_height,
+                yaw=0.0,
+                pitch=-self.default_tilt_deg,
+                roll=0.0,
+            )
+
+        # Warm up
+        self.render(pose, physics_client=physics_client)
+
+        t_start = time.perf_counter()
+        for _ in range(num_frames):
+            self.render(pose, physics_client=physics_client)
+        t_elapsed = time.perf_counter() - t_start
+
+        fps = num_frames / max(t_elapsed, 1e-6)
+        ms_per_frame = (t_elapsed / num_frames) * 1000.0
+
+        print(f"  Resolution  : {self.width} × {self.height}")
+        print(
+            f"  Renderer    : {'CPU TinyRenderer' if self.renderer == p.ER_TINY_RENDERER else 'OpenGL'}"
+        )
+        print(f"  Frames      : {num_frames}")
+        print(f"  Total time  : {t_elapsed:.3f} s")
+        print(f"  Throughput  : {fps:.2f} FPS ({ms_per_frame:.2f} ms/frame)")
+
+        return fps
+
+
+# --------------------------------------------------------------------------- #
+# CLI entry point
+# --------------------------------------------------------------------------- #
+def main() -> None:
+    parser = argparse.ArgumentParser(description="NIDAR Camera Benchmark & Test")
+    parser.add_argument("--frames", type=int, default=30, help="Frames to benchmark")
+    parser.add_argument(
+        "--width", type=int, default=None, help="Image width (default: from arena.yaml)"
+    )
+    parser.add_argument(
+        "--height", type=int, default=None, help="Image height (default: from arena.yaml)"
+    )
+    parser.add_argument(
+        "--arena",
+        type=str,
+        default=str(DEFAULT_ARENA_CONFIG),
+        help="Path to arena.yaml",
+    )
+    args = parser.parse_args()
+
+    cid = p.connect(p.DIRECT)
+    try:
+        # Create a simple floor for realistic rendering
+        floor_col = p.createCollisionShape(p.GEOM_PLANE, physicsClientId=cid)
+        p.createMultiBody(0, floor_col, physicsClientId=cid)
+
+        camera = PinholeCamera(
+            arena_config_path=args.arena,
+            width=args.width,
+            height=args.height,
+        )
+
+        print("=" * 60)
+        print("  NIDAR Pinhole Camera Simulator Benchmark")
+        print("=" * 60)
+        camera.benchmark(num_frames=args.frames, physics_client=cid)
+        print("=" * 60)
+
+        # Test single render output properties
+        test_pose = CameraPose(x=2.0, y=2.0, z=0.8, yaw=45.0, pitch=-30.0, roll=0.0)
+        out = camera.render(test_pose, physics_client=cid)
+        print("  Render verification:")
+        print(f"    BGR shape     : {out.bgr.shape}, dtype={out.bgr.dtype}")
+        print(f"    Depth shape   : {out.depth.shape}, dtype={out.depth.dtype}")
+        print(f"    Seg mask shape: {out.seg_mask.shape}, dtype={out.seg_mask.dtype}")
+        print("Camera verification passed.")
+    finally:
+        p.disconnect(cid)
+
+
+if __name__ == "__main__":
+    main()

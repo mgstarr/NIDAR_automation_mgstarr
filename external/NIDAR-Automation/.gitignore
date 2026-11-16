@@ -1,0 +1,82 @@
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+
+# Virtual Environments
+.venv/
+venv/
+env/
+ENV/
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# Testing & Coverage
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Jupyter Notebook Checkpoints
+.ipynb_checkpoints/
+*/.ipynb_checkpoints/*
+
+# Model Weights & Exported Artifacts (Preserve folder structure with .gitkeep)
+models/*
+!models/.gitkeep
+# Handoff weights for the controls team are committed (ADR 003 amendment, 16 Nov 2026)
+!models/survivor_yolo11n_demo.pt
+*.pt
+*.pth
+*.onnx
+*.engine
+*.tflite
+*.weights
+*_ncnn_model/
+
+# Datasets, Sample Media, and Raw Video Recordings
+# Ignore everything under data/ except .gitkeep files and data/README.md
+data/**
+!data/**/
+!data/**/.gitkeep
+!data/README.md
+data/raw/
+datasets/
+runs/
+*.mp4
+*.avi
+*.mkv
+*.mov
+
+# Outputs & Logs
+outputs/*
+!outputs/.gitkeep
+*.log
+
+# Web artifacts
+node_modules/
+dist/
+.eslintcache
+
+# Editor & OS metadata
+.vscode/
+.idea/
+*.swp
+*~
+.DS_Store
+Thumbs.db
+desktop.ini

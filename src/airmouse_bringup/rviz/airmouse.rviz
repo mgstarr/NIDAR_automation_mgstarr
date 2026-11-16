@@ -71,6 +71,14 @@ Visualization Manager:
         Depth: 1
       Color: 255; 0; 255
       Shape: Arrow
+    - Class: rviz_default_plugins/Image
+      Name: Survivor detection
+      Enabled: true
+      Topic:
+        Value: /detection/image
+        Reliability Policy: Reliable
+        Durability Policy: Volatile
+        Depth: 2
     - Class: rviz_default_plugins/TF
       Name: TF
       Enabled: true

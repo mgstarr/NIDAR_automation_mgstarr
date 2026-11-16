@@ -1,0 +1,9 @@
+# Survivor detector (airmouse_detection). Values from the detection team's README section 7:
+# the handoff model survivor_yolo11n_demo.pt at confidence 0.403 and image size 416.
+survivor_detector_node:
+  ros__parameters:
+    model_path: ""        # empty = the handoff weights installed with airmouse_detection
+    confidence: 0.403
+    image_size: 416
+    device: "cpu"         # like the Raspberry Pi; "cuda:0" on a GPU machine
+    rate: 3.0             # Hz; frames in between are skipped
