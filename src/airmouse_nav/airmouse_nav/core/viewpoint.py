@@ -51,6 +51,11 @@ from airmouse_nav.core.grid_utils import (GridInfo, PlanningGrid, build_planning
                                           cell_to_world, clear_unknown_around, in_bounds,
                                           world_to_cell)
 
+def relaxed_margins(safety_margin: float) -> tuple[float, ...]:
+    """Safety margins to try in order: full, half, none (planning falls back only if needed)."""
+    return (safety_margin, safety_margin / 2.0, 0.0) if safety_margin > 0 else (0.0,)
+
+
 PROGRESS_STEP = 0.1       # m of travel cost that counts as progress (stuck rule)
 BLACKLIST_RADIUS = 0.3    # m around a blacklisted goal where no candidate is taken
 VISITED_RADIUS = 0.3      # m: a candidate this close to a visited viewpoint ...
@@ -234,6 +239,7 @@ class ExplorationPlanner:
         self.last_progress = 0.0
         self.no_view_since: float | None = None   # clusters exist but no viewpoint reachable
         self.visited: list[tuple[float, float, float]] = []   # viewpoints already taken
+        self.margin_used = params.safety_margin               # margin of the last replan
 
     def goal_reached(self) -> None:
         """The current goal's view has been taken: remember it (never re-pick the same
@@ -261,17 +267,24 @@ class ExplorationPlanner:
         p = self.p
         x, y, yaw = pose
         g = clear_unknown_around(grid, info, (x, y), p.clear_radius)
-        pg = build_planning_grid(g, info, p.guarded_radius, p.safety_margin, p.wall_cost_range)
-        costs = dijkstra_costs(pg, (x, y), p.wall_cost_weight)
         free = free_mask(g)
         target = (g < 0) | (free & ~seen)
         min_gain = p.min_cluster_size * info.resolution ** 2
         map_cl = cluster_cells(frontier_mask(g), info, p.min_cluster_size)
         view_cl = cluster_cells(free & ~seen, info, p.min_cluster_size)
 
-        cands = []
-        for cl in map_cl + view_cl:
-            cands += sample_candidates(cl, info, pg, costs, p, g)
+        # Safety margin: the full value first. If no viewpoint at all is reachable (on a SLAM
+        # map, smeared walls can close a 1 m corridor), step it down to half and then to zero
+        # (the guarded radius alone) rather than giving up.
+        for margin in relaxed_margins(p.safety_margin):
+            pg = build_planning_grid(g, info, p.guarded_radius, margin, p.wall_cost_range)
+            costs = dijkstra_costs(pg, (x, y), p.wall_cost_weight)
+            cands = []
+            for cl in map_cl + view_cl:
+                cands += sample_candidates(cl, info, pg, costs, p, g)
+            if cands:
+                break
+        self.margin_used = margin
         for v in cands:      # cost first (cheap); gain (a ray cast) only when it can matter
             v.cost += p.turn_cost * abs(math.remainder(v.yaw - yaw, 2 * math.pi))
         cands.sort(key=lambda v: (v.cost, v.x, v.y))

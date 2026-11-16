@@ -51,7 +51,8 @@ from airmouse_nav.core.grid_utils import (GridInfo, build_planning_grid, cell_to
                                           world_to_cell)
 from airmouse_nav.core.mission import (Mission, State, Trigger, localization_status,
                                        should_return)
-from airmouse_nav.core.viewpoint import ExplorationPlanner, ExplorerParams, dijkstra_costs
+from airmouse_nav.core.viewpoint import (ExplorationPlanner, ExplorerParams, dijkstra_costs,
+                                         relaxed_margins)
 
 NODE_NAME = 'explorer_node'
 TICK = 0.1                 # s
@@ -449,6 +450,10 @@ class ExplorerNode(Node):
             return
         if dec.reason:
             self.get_logger().info(f'replan: {dec.reason}')
+        if self.explorer.margin_used < self.p.safety_margin:
+            self.get_logger().warn(f'viewpoints reachable only with the safety margin reduced '
+                                   f'to {self.explorer.margin_used:.2f} m',
+                                   throttle_duration_sec=10.0)
         if self.budget_low(grid, info, x, y):
             self.get_logger().warn('return budget reached')
             self.change(Trigger.BUDGET_LOW)
@@ -508,19 +513,27 @@ class ExplorerNode(Node):
         grid = self.outside_blocked(grid_from_occupancy(m.data, m.info.width, m.info.height), info)
         grid = clear_unknown_around(grid, info, (x, y), self.p.clear_radius)
         grid = clear_unknown_around(grid, info, self.home, self.p.clear_radius)
-        pg = build_planning_grid(grid, info, self.p.guarded_radius, self.p.safety_margin,
-                                 self.p.wall_cost_range)
-        target = self.home
         r, c = world_to_cell(info, *self.home)
-        if not (0 <= r < info.rows and 0 <= c < info.cols) or pg.blocked[r, c]:
-            free = np.argwhere(~pg.blocked)
-            if free.size:
-                d2 = (free[:, 0] - r) ** 2 + (free[:, 1] - c) ** 2
-                k = int(np.argmin(d2))
-                if d2[k] * info.resolution ** 2 <= HOME_SNAP_RADIUS ** 2:
-                    target = cell_to_world(info, int(free[k, 0]), int(free[k, 1]))
+        # Full safety margin first; half, then none, only if there is no way home otherwise
+        # (smeared walls on a SLAM map can close a 1 m corridor at the full margin).
+        for margin in relaxed_margins(self.p.safety_margin):
+            pg = build_planning_grid(grid, info, self.p.guarded_radius, margin,
+                                     self.p.wall_cost_range)
+            target = self.home
+            if not (0 <= r < info.rows and 0 <= c < info.cols) or pg.blocked[r, c]:
+                free = np.argwhere(~pg.blocked)
+                if free.size:
+                    d2 = (free[:, 0] - r) ** 2 + (free[:, 1] - c) ** 2
+                    k = int(np.argmin(d2))
+                    if d2[k] * info.resolution ** 2 <= HOME_SNAP_RADIUS ** 2:
+                        target = cell_to_world(info, int(free[k, 0]), int(free[k, 1]))
+            res = plan(pg, (x, y), target, wall_cost_weight=self.p.wall_cost_weight)
+            if res.success:
+                break
         self.home_target = target
-        res = plan(pg, (x, y), target, wall_cost_weight=self.p.wall_cost_weight)
+        if res.success and margin < self.p.safety_margin:
+            self.get_logger().warn(f'way home found only with the safety margin reduced to '
+                                   f'{margin:.2f} m', throttle_duration_sec=10.0)
         if not res.success:
             self.get_logger().warn(f'no path home: {res.reason}', throttle_duration_sec=5.0)
             return

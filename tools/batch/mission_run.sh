@@ -41,6 +41,12 @@ while true; do
   sleep 5
 done
 sleep 3
+# Map accuracy against the maze's ground-truth layout (Phase 2 scorer).
+mkdir -p /tmp/maps
+python3 tools/save_map.py --name mission_${SEED}_${LIDAR} --out-dir /tmp/maps --seed $SEED > /dev/null 2>&1 \
+  && python3 tools/score_map.py --map /tmp/maps/mission_${SEED}_${LIDAR}.yaml \
+       --layout src/airmouse_description/worlds/generated/seed_${SEED}_${TEX}/layout.yaml 2>/dev/null \
+     | sed 's/^/MAP SCORE /' >> $LOG
 kill -INT $CL $PE; sleep 5
 pkill -INT -f "[r]os2 bag record"; pkill -INT -f "[s]ave_detections"; sleep 2
 grep -a -E "mission:|exploration complete|return budget|no path home|geofence|localization|blacklisted" /tmp/mission_launch.log | tail -25 >> $LOG
