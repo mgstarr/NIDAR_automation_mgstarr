@@ -3,7 +3,7 @@
 import pytest
 
 from airmouse_nav.core.mission import (ABORT_TRIGGERS, TERMINAL, Mission, State, Trigger,
-                                       should_return)
+                                       localization_status, should_return)
 
 EXPECTED = {
     (State.IDLE, Trigger.START): State.TAKEOFF,
@@ -54,3 +54,12 @@ def test_return_budget_short_trip() -> None:
     """With home 12 m away the trigger fires just after 1635 s."""
     assert not should_return(1634, 1800, 12.0, 0.6, 1.5, 15.0, 120)
     assert should_return(1636, 1800, 12.0, 0.6, 1.5, 15.0, 120)
+
+
+def test_localization_status() -> None:
+    """Fresh odometry and small uncertainty are ok; a gap or large uncertainty is not."""
+    assert localization_status(10.0, 9.8, 0.05, 0.5, 0.5) == 'ok'
+    assert localization_status(10.0, 9.8, None, 0.5, 0.5) == 'ok'
+    assert localization_status(10.0, 9.4, 0.05, 0.5, 0.5) == 'odometry lost'
+    assert localization_status(10.0, None, 0.05, 0.5, 0.5) == 'odometry lost'
+    assert localization_status(10.0, 9.8, 0.6, 0.5, 0.5) == 'uncertain'

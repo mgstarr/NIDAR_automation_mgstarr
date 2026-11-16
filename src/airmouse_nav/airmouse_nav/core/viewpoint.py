@@ -18,9 +18,10 @@ How a replan works:
   2. Targets = unknown cells + free cells the camera has not seen.
      Map frontiers (free next to unknown) and view frontiers (free, unseen) are clustered
      (frontier.cluster_cells, min_cluster_size cells).
-  3. Candidates: reachable safe cells 0.6-1.5 m (sample_radii) from each cluster's anchor
-     cell, one per direction sector (sample_directions) and radius band; heading = facing the
-     anchor. Falls back to cells within coverage_range when the band has none.
+  3. Candidates: safe, reachable cells with a clear line of sight to a cluster anchor (the
+     anchor cell, plus quarter points of large clusters) within coverage_range; one per
+     direction sector (sample_directions) and distance band (sample_radii, then out to
+     coverage_range); heading = facing the anchor.
   4. gain = m^2 of target cells visible from the candidate pose (coverage.ray_cells, rays stop
      at walls); cost = Dijkstra travel cost (one search from the drone per replan, same step cost
      as A*) + turn_cost x |heading change|; score = gain_weight x gain - cost.
@@ -162,46 +163,63 @@ def view_gain(grid: np.ndarray, info: GridInfo, target: np.ndarray, x: float, y:
     return float(target[rows[far], cols[far]].sum()) * info.resolution ** 2
 
 
-def sample_candidates(cluster: Cluster, info: GridInfo, pg: PlanningGrid, costs: np.ndarray,
-                      p: ExplorerParams) -> list[Viewpoint]:
-    """Reachable, unblocked poses near a cluster, each facing the cluster's anchor.
+def cluster_anchors(cluster: Cluster) -> list[tuple[int, int]]:
+    """Cells of a cluster to aim at: its anchor, plus the quarter points of large clusters."""
+    anchors = [cluster.anchor]
+    if cluster.size > 40:
+        for q in (0, cluster.size // 4, cluster.size // 2, 3 * cluster.size // 4,
+                  cluster.size - 1):
+            cell = (int(cluster.cells[q, 0]), int(cluster.cells[q, 1]))
+            if cell not in anchors:
+                anchors.append(cell)
+    return anchors
 
-    Takes reachable safe cells whose distance to the anchor is within
-    [min(sample_radii), max(sample_radii)], spread over `sample_directions` direction sectors
-    and the radius bands (the nearest-to-band cell per sector and band). If none qualify, the
-    reachable safe cells within coverage_range are used the same way (narrow corridors leave
-    only a thin safe strip).
+
+def sample_candidates(cluster: Cluster, info: GridInfo, pg: PlanningGrid, costs: np.ndarray,
+                      p: ExplorerParams, grid: np.ndarray | None = None) -> list[Viewpoint]:
+    """Reachable, unblocked poses that can SEE the cluster, each facing one of its anchors.
+
+    For each anchor (cluster_anchors), the pool is every safe, reachable cell with a clear
+    line of sight to it within coverage_range (rays cast from the anchor, stopped by walls;
+    visibility is symmetric) and at least camera_min_range away. From the pool, the cell
+    nearest the anchor is taken in each direction sector (sample_directions) and distance band
+    (sample_radii, then out to coverage_range). Without `grid` (no line-of-sight test) every
+    reachable cell in range is in the pool.
     """
-    ar, ac = cluster.anchor
-    ax, ay = cell_to_world(info, ar, ac)
-    reach = int(math.ceil(p.coverage_range / info.resolution))
-    r0, c0 = max(0, ar - reach), max(0, ac - reach)
-    win = np.isfinite(costs[r0:ar + reach + 1, c0:ac + reach + 1]) & \
-        ~pg.blocked[r0:ar + reach + 1, c0:ac + reach + 1]
-    cells = np.argwhere(win)
-    if cells.size == 0:
-        return []
-    cells += (r0, c0)
-    dx = (cells[:, 1] - ac) * info.resolution
-    dy = (cells[:, 0] - ar) * info.resolution
-    dist = np.hypot(dx, dy)
-    lo, hi = min(p.sample_radii), max(p.sample_radii)
-    use = (dist >= lo) & (dist <= hi)
-    if not use.any():
-        use = dist <= p.coverage_range
-    cells, dist, dx, dy = cells[use], dist[use], dx[use], dy[use]
-    sector = ((np.arctan2(dy, dx) + math.pi) / (2 * math.pi) * p.sample_directions).astype(int)
-    sector = np.minimum(sector, p.sample_directions - 1)
-    bands = np.digitize(dist, sorted(p.sample_radii))
-    out, taken = [], set()
-    for k in np.lexsort((cells[:, 1], cells[:, 0], dist)):
-        key = (int(sector[k]), int(bands[k]))
-        if key in taken:
+    out = []
+    edges = sorted(p.sample_radii)
+    for ar, ac in cluster_anchors(cluster):
+        ax, ay = cell_to_world(info, ar, ac)
+        if grid is not None:
+            rows, cols = ray_cells(grid, info, ax, ay, 0.0, 2 * math.pi, p.coverage_range)
+        else:
+            reach = int(math.ceil(p.coverage_range / info.resolution))
+            rr, cc = np.mgrid[max(0, ar - reach):min(info.rows, ar + reach + 1),
+                              max(0, ac - reach):min(info.cols, ac + reach + 1)]
+            rows, cols = rr.ravel(), cc.ravel()
+        ok = np.isfinite(costs[rows, cols]) & ~pg.blocked[rows, cols]
+        rows, cols = rows[ok], cols[ok]
+        if rows.size == 0:
             continue
-        taken.add(key)
-        x, y = cell_to_world(info, int(cells[k, 0]), int(cells[k, 1]))
-        out.append(Viewpoint(x, y, math.atan2(ay - y, ax - x),
-                             cost=float(costs[cells[k, 0], cells[k, 1]])))
+        dx = (cols - ac) * info.resolution
+        dy = (rows - ar) * info.resolution
+        dist = np.hypot(dx, dy)
+        use = (dist >= p.camera_min_range) & (dist <= p.coverage_range)
+        rows, cols, dist, dx, dy = rows[use], cols[use], dist[use], dx[use], dy[use]
+        if rows.size == 0:
+            continue
+        sector = ((np.arctan2(dy, dx) + math.pi) / (2 * math.pi) * p.sample_directions).astype(int)
+        sector = np.minimum(sector, p.sample_directions - 1)
+        bands = np.digitize(dist, edges)
+        taken = set()
+        for k in np.lexsort((cols, rows, dist)):
+            key = (int(sector[k]), int(bands[k]))
+            if key in taken:
+                continue
+            taken.add(key)
+            x, y = cell_to_world(info, int(rows[k]), int(cols[k]))
+            out.append(Viewpoint(x, y, math.atan2(ay - y, ax - x),
+                                 cost=float(costs[rows[k], cols[k]])))
     return out
 
 
@@ -253,7 +271,7 @@ class ExplorationPlanner:
 
         cands = []
         for cl in map_cl + view_cl:
-            for v in sample_candidates(cl, info, pg, costs, p):
+            for v in sample_candidates(cl, info, pg, costs, p, g):
                 cands.append(self._score(v, g, info, target, costs, yaw))
         cands = [v for v in cands if v.gain >= min_gain]
 

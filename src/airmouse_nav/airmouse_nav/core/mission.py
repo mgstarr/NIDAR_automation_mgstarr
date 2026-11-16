@@ -18,6 +18,7 @@ Public API:
     m.handle(Trigger.START) -> State            # applies the table, returns the new state
     m.state, m.history (list of (old, trigger, new))
     should_return(elapsed, time_limit, home_cost_m, speed, safety_factor, landing_time, reserve)
+    localization_status(now, last_odometry_time, position_std, odometry_timeout, max_position_std)
 """
 
 from __future__ import annotations
@@ -108,3 +109,23 @@ def should_return(elapsed: float, time_limit: float, home_cost: float, speed: fl
     remaining = time_limit - elapsed
     need = home_cost / max(speed, 1e-6) * safety_factor + landing_time
     return remaining - need < reserve
+
+
+def localization_status(now: float, last_odometry_time: float | None,
+                        position_std: float | None, odometry_timeout: float,
+                        max_position_std: float) -> str:
+    """Health of the position estimate (Phase 6): 'ok', 'odometry lost' or 'uncertain'.
+
+    Args:
+        now: Current time (s).
+        last_odometry_time: Time of the last VALID sensor-odometry message (RTAB-Map ICP or
+            visual odometry), or None if none has arrived yet.
+        position_std: Larger of the EKF's x and y standard deviations (m), or None if unknown.
+        odometry_timeout: No valid odometry for longer than this -> 'odometry lost'.
+        max_position_std: EKF uncertainty above this -> 'uncertain'.
+    """
+    if last_odometry_time is None or now - last_odometry_time > odometry_timeout:
+        return 'odometry lost'
+    if position_std is not None and position_std > max_position_std:
+        return 'uncertain'
+    return 'ok'

@@ -30,3 +30,41 @@ rtabmap:
     Grid/RayTracing: "true"        # mark free space between the sensor and each obstacle
     Grid/NoiseFilteringRadius: "0.1"        # drop obstacle points with fewer than
     Grid/NoiseFilteringMinNeighbors: "5"    # 5 neighbours within 0.1 m (depth speckle)
+
+# ---------------------------------------------------------------------------- Phase 6
+# Odometry from sensors (use_ground_truth:=false). Both publish /rtabmap/odom for the EKF and
+# no TF (the EKF owns odom -> base_link).
+icp_odometry:                       # use_lidar:=true: laser scan matching
+  ros__parameters:
+    frame_id: base_link
+    odom_frame_id: odom
+    publish_tf: false
+    wait_for_transform: 0.2
+    expected_update_rate: 15.0
+    Reg/Force3DoF: "true"           # a 2D scan gives x, y and yaw only
+    Odom/Strategy: "0"              # frame-to-map
+    Odom/ResetCountdown: "1"        # restart from the last pose after a failed match
+    Odom/ScanKeyFrameThr: "0.6"
+    OdomF2M/ScanSubtractRadius: "0.05"
+    OdomF2M/ScanMaxSize: "3000"
+    Icp/VoxelSize: "0.05"
+    Icp/MaxCorrespondenceDistance: "0.15"
+    Icp/PointToPlane: "true"
+    Icp/PointToPlaneK: "5"
+    Icp/Iterations: "10"
+    Icp/Epsilon: "0.001"
+    Icp/CorrespondenceRatio: "0.3"
+rgbd_odometry:                      # use_lidar:=false: visual odometry from colour + depth
+  ros__parameters:
+    frame_id: base_link
+    odom_frame_id: odom
+    publish_tf: false
+    wait_for_transform: 0.2
+    approx_sync: true
+    sync_queue_size: 10
+    Odom/Strategy: "0"              # frame-to-map
+    Odom/ResetCountdown: "1"
+    Vis/MaxFeatures: "600"          # Raspberry Pi budget: limited feature count
+    Vis/MinInliers: "12"
+    Vis/MaxDepth: "4.0"
+    GFTT/MinDistance: "7"

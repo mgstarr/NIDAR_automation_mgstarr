@@ -21,6 +21,10 @@ Per state (tick at 10 Hz):
   ABORT        hold position for 2 s, then a vertical landing path where the drone is.
 Aborts: /mission/abort, no pose for localization_lost_timeout, or the pose outside
 arena_bounds (geofence breach).
+Phase 6 (check_odometry true, i.e. use_ground_truth false): if no valid /rtabmap/odom arrives
+for odometry_timeout, or the EKF's position standard deviation (/odom) exceeds max_position_std,
+the drone hovers (empty path -> the controller holds position); if that lasts
+localization_lost_timeout the mission ABORTs (hover, then land in place).
 """
 
 from __future__ import annotations
@@ -31,7 +35,7 @@ import time  # noqa: F401  (perf_counter)
 import numpy as np
 import rclpy
 from geometry_msgs.msg import PoseStamped
-from nav_msgs.msg import OccupancyGrid, Path
+from nav_msgs.msg import OccupancyGrid, Odometry, Path
 from rclpy.node import Node
 from rclpy.qos import DurabilityPolicy, QoSProfile, ReliabilityPolicy
 from rclpy.time import Time
@@ -45,7 +49,8 @@ from airmouse_nav.core.coverage import Coverage
 from airmouse_nav.core.grid_utils import (GridInfo, build_planning_grid, cell_to_world,
                                           clear_unknown_around, grid_from_occupancy,
                                           world_to_cell)
-from airmouse_nav.core.mission import Mission, State, Trigger, should_return
+from airmouse_nav.core.mission import (Mission, State, Trigger, localization_status,
+                                       should_return)
 from airmouse_nav.core.viewpoint import ExplorationPlanner, ExplorerParams, dijkstra_costs
 
 NODE_NAME = 'explorer_node'
@@ -74,6 +79,13 @@ class ExplorerNode(Node):
         self.landing_time = d('landing_time', 15.0)
         self.large_change = d('large_map_change', 0.02)
         self.use_lidar = d('use_lidar', True)
+        # Phase 6 localization health (only checked when the stack runs on its own odometry).
+        self.check_odometry = d('check_odometry', False)
+        self.odometry_timeout = d('odometry_timeout', 0.5)
+        self.max_position_std = d('max_position_std', 0.5)
+        self.last_odometry: float | None = None     # last VALID /rtabmap/odom (ROS time)
+        self.position_std: float | None = None      # from the EKF's /odom covariance
+        self.loc_bad_since: float | None = None
         self.flight_altitude = d('flight_altitude', 1.2)
         self.max_speed = d('max_speed', 0.6)
         self.tol = d('goal_tolerance_xy', 0.15)
@@ -119,6 +131,9 @@ class ExplorerNode(Node):
                              durability=DurabilityPolicy.TRANSIENT_LOCAL)
         self.create_subscription(OccupancyGrid, '/map', self.on_map, qos_map)
         self.create_subscription(String, '/nav/controller_state', self.on_controller, 10)
+        if self.check_odometry:
+            self.create_subscription(Odometry, '/rtabmap/odom', self.on_sensor_odometry, 10)
+            self.create_subscription(Odometry, '/odom', self.on_ekf_odometry, 10)
         try:
             from sensor_msgs.msg import BatteryState
             self.create_subscription(BatteryState, '/battery', self.on_battery, 1)
@@ -157,6 +172,39 @@ class ExplorerNode(Node):
         self.controller_state = msg.data
         if msg.data == 'following':
             self.seen_following = True
+
+    def on_sensor_odometry(self, msg: Odometry) -> None:
+        """RTAB-Map odometry: valid unless it reports "lost" (covariance >= 9999)."""
+        if msg.pose.covariance[0] < 9000.0:
+            self.last_odometry = self.now()
+
+    def on_ekf_odometry(self, msg: Odometry) -> None:
+        """EKF output: keep the larger of the x and y standard deviations."""
+        self.position_std = math.sqrt(max(msg.pose.covariance[0], msg.pose.covariance[7], 0.0))
+
+    def localization_healthy(self, airborne: bool) -> bool:
+        """Phase 6 failsafe: hover while the position estimate is bad; ABORT if it stays bad
+        for localization_lost_timeout. Returns False while hovering (skip the state actions)."""
+        if not self.check_odometry or not airborne:
+            self.loc_bad_since = None
+            return True
+        status = localization_status(self.now(), self.last_odometry, self.position_std,
+                                     self.odometry_timeout, self.max_position_std)
+        if status == 'ok':
+            if self.loc_bad_since is not None:
+                self.get_logger().info('localization recovered: resuming')
+                self.loc_bad_since = None
+                self.path_points, self.next_replan = [], 0.0
+            return True
+        if self.loc_bad_since is None:
+            self.loc_bad_since = self.now()
+            self.get_logger().warn(f'localization {status}: hovering')
+            self.publish_path([])              # empty path: the controller holds position
+            self.path_points = []
+        elif self.now() - self.loc_bad_since > self.loc_timeout:
+            self.get_logger().error(f'localization {status} for {self.loc_timeout} s')
+            self.change(Trigger.LOCALIZATION_LOST)
+        return False
 
     def on_battery(self, msg) -> None:
         """Battery input reserved for later (PLAN.md); only logged."""
@@ -311,6 +359,8 @@ class ExplorerNode(Node):
             self.change(Trigger.LOCALIZATION_LOST)
             return
         if self.pose is None:
+            return
+        if not self.localization_healthy(airborne):
             return
         x, y, z, yaw = self.pose
         if airborne and not (self.bounds[0] <= x <= self.bounds[1]

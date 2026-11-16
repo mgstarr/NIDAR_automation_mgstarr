@@ -116,29 +116,49 @@ class World:
         self._seeable = None
 
     def seeable(self, p: ExplorerParams) -> np.ndarray:
-        """Free cells the camera can see (within coverage_range, any heading) from SOME pose
-        the drone may fly to: safe cells (planning grid on the true map) reachable from home.
-        Cells hidden from every such pose (e.g. behind a survivor that blocks a room) cannot be
-        required."""
+        """Free cells an ideal explorer could ever see under the drone's own safety rules.
+
+        Grown from the start, as the real drone must: at first only what is visible from home
+        (any heading, within coverage_range) is known. Then, repeatedly: unknown space is
+        inflated like a wall; from every safe cell reachable from home the camera looks around;
+        whatever it sees becomes known. This stops when nothing new is seen. Cells outside the
+        result (e.g. the shadow behind a survivor who blocks the way round) cannot be required
+        of any explorer that keeps the safety band around unknown space.
+        """
         if self._seeable is not None:
             return self._seeable
-        g = np.where(self.occ | ~self.arena, 100, 0).astype(np.int8)
-        pg = build_planning_grid(g, self.info, p.guarded_radius, p.safety_margin,
-                                 p.wall_cost_range)
-        costs = dijkstra_costs(pg, (0.0, 0.0), p.wall_cost_weight)
-        reach = np.isfinite(costs)
+        base = np.where(self.occ | ~self.arena, 100, 0).astype(np.int8)
+        free = ~self.occ & self.arena
         step = 3   # every 3rd cell (0.15 m) in each direction is a viewing position
-        out = np.zeros(self.occ.shape, bool)
-        for r, c in np.argwhere(reach):
-            if r % step or c % step:
-                continue
-            x = self.info.origin_x + (c + 0.5) * self.info.resolution
-            y = self.info.origin_y + (r + 0.5) * self.info.resolution
-            rows, cols = ray_cells(g, self.info, x, y, 0.0, 2 * math.pi, p.coverage_range)
-            out[rows, cols] = True
-        # also the thin strips (corridor centres are only ~4 cells wide): add every reachable
-        # cell on rows/cols not covered by the stride
-        self._seeable = out & ~self.occ
+        visible = np.zeros(self.occ.shape, bool)
+        known_occ = np.zeros(self.occ.shape, bool)
+        used = np.zeros(self.occ.shape, bool)      # viewing positions already cast from
+
+        def look(x: float, y: float) -> None:
+            rows, cols = ray_cells(base, self.info, x, y, 0.0, 2 * math.pi, p.coverage_range)
+            hit = base[rows, cols] >= 50
+            known_occ[rows[hit], cols[hit]] = True
+            visible[rows[~hit], cols[~hit]] = True
+
+        look(0.0, 0.0)
+        for _ in range(200):
+            g = np.full(self.occ.shape, -1, np.int8)
+            g[visible & free] = 0
+            g[known_occ | ~self.arena] = 100
+            g = clear_unknown_around(g, self.info, (0.0, 0.0), p.clear_radius)
+            pg = build_planning_grid(g, self.info, p.guarded_radius, p.safety_margin,
+                                     p.wall_cost_range)
+            costs = dijkstra_costs(pg, (0.0, 0.0), p.wall_cost_weight)
+            new = np.isfinite(costs) & ~used
+            new[np.arange(self.occ.shape[0]) % step != 0, :] = False
+            new[:, np.arange(self.occ.shape[1]) % step != 0] = False
+            if not new.any():
+                break
+            for r, c in np.argwhere(new):
+                look(self.info.origin_x + (c + 0.5) * self.info.resolution,
+                     self.info.origin_y + (r + 0.5) * self.info.resolution)
+            used |= new
+        self._seeable = visible & free
         return self._seeable
 
     def sense(self, grid: np.ndarray, x: float, y: float, yaw: float, hfov: float,

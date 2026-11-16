@@ -113,3 +113,24 @@ def test_clearance_exact_distance(tmp_path) -> None:
     cl = Clearance(tmp_path)
     assert cl.at(0.55, 1.0) == pytest.approx(0.50)
     assert cl.at(1.0, 1.0) == pytest.approx(0.30)     # survivor edge at 1.30
+
+
+def test_pose_error_on_synthetic_trajectory() -> None:
+    """ATE: zero for identical tracks; a constant 0.1 m offset gives rmse 0.1 and aligned 0;
+    a known growing drift gives the expected rmse and final error."""
+    from pose_error import ate
+    t = np.linspace(0, 100, 501)
+    gt = np.column_stack([t, 0.05 * t, np.sin(t / 10)])
+    same = ate(gt[::5], gt)
+    assert same['rmse'] == pytest.approx(0, abs=1e-9) and same['samples'] == 101
+    off = gt.copy()
+    off[:, 1] += 0.1
+    r = ate(off[::5], gt)
+    assert r['rmse'] == pytest.approx(0.1) and r['max'] == pytest.approx(0.1)
+    assert r['aligned_rmse'] == pytest.approx(0, abs=1e-9)
+    drift = gt.copy()
+    drift[:, 2] += 0.002 * t                         # 0 -> 0.2 m sideways drift
+    r = ate(drift, gt)
+    assert r['final'] == pytest.approx(0.2) and r['max'] == pytest.approx(0.2)
+    assert r['rmse'] == pytest.approx(0.2 / np.sqrt(3), rel=0.01)
+    assert ate(gt[:3] + [1000, 0, 0], gt)['samples'] == 0

@@ -54,7 +54,8 @@ def launch_setup(context, *args, **kwargs) -> list:
         parameters=[str(config / 'explorer.yaml'), str(config / 'planner.yaml'),
                     str(config / 'controller.yaml'),
                     {'use_sim_time': a['use_sim_time'] == 'true',
-                     'use_lidar': a['use_lidar'] == 'true', 'arena_bounds': bounds}])
+                     'use_lidar': a['use_lidar'] == 'true', 'arena_bounds': bounds,
+                     'check_odometry': a['use_ground_truth'] != 'true'}])
     return [
         include('sim.launch.py', {k: a[k] for k in ('seed', 'wall_texture', 'use_lidar',
                                                     'use_ground_truth', 'use_sim_time', 'gui',

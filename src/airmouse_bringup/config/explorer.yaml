@@ -13,6 +13,8 @@ explorer_node:
     return_reserve: 120.0            # s kept spare when deciding to return
     return_safety_factor: 1.5        # x estimated home travel time
     localization_lost_timeout: 3.0   # s without a pose -> ABORT
+    odometry_timeout: 0.5            # s without valid sensor odometry -> hover (Phase 6; PROVISIONAL, owner to confirm)
+    max_position_std: 0.5            # m of EKF position uncertainty -> hover (Phase 6; PROVISIONAL, owner to confirm)
     landing_time: 15.0               # s, used in the return budget (Phase 5, owner approved)
     large_map_change: 0.02           # replan early when known cells change by > 2%
     # [xmin, xmax, ymin, ymax]; in simulation the launch files override it from the maze.

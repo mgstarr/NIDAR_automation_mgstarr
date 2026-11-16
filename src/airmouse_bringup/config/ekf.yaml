@@ -1,5 +1,42 @@
-# robot_localization EKF. Filled in Phase 6.
-# Fuses RTAB-Map odometry, the camera IMU and the downward rangefinder;
-# publishes /odom and the odom -> base_link transform.
-ekf_filter_node:
-  ros__parameters: {}
+# EKF (robot_localization), Phase 6. Fuses RTAB-Map odometry, the camera IMU and the downward
+# rangefinder. Publishes /odom (remapped from odometry/filtered) and TF odom -> base_link.
+# Each *_config list is [x, y, z, roll, pitch, yaw, vx, vy, vz, vroll, vpitch, vyaw, ax, ay, az].
+ekf_node:
+  ros__parameters:
+    frequency: 50.0                 # Hz: /odom contract rate
+    sensor_timeout: 0.2
+    two_d_mode: false               # the drone changes height
+    publish_tf: true
+    map_frame: map
+    odom_frame: odom
+    base_link_frame: base_link
+    world_frame: odom
+
+    # RTAB-Map odometry (ICP from /scan with LiDAR, RGB-D visual without): x, y, yaw + velocities.
+    odom0: /rtabmap/odom
+    odom0_config: [true, true, false, false, false, true,
+                   true, true, false, false, false, true,
+                   false, false, false]
+    odom0_queue_size: 10
+    odom0_differential: false
+    odom0_pose_rejection_threshold: 5.0     # Mahalanobis: drop wild jumps
+    odom0_twist_rejection_threshold: 5.0
+
+    # Camera IMU: roll and pitch (attitude), angular velocity, horizontal acceleration.
+    # The simulated IMU reports orientation; the real D435i does not, so on the drone
+    # imu_filter_madgwick must run first (open issue in the Phase 6 handoff).
+    imu0: /camera/imu
+    imu0_config: [false, false, false, true, true, false,
+                  false, false, false, true, true, true,
+                  true, true, false]
+    imu0_queue_size: 50
+    imu0_differential: false
+    imu0_remove_gravitational_acceleration: true
+
+    # Downward rangefinder through range_to_z_node: height only.
+    pose0: /range/down/pose
+    pose0_config: [false, false, true, false, false, false,
+                   false, false, false, false, false, false,
+                   false, false, false]
+    pose0_queue_size: 10
+    pose0_differential: false
