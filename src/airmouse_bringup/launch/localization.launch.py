@@ -4,6 +4,7 @@ Example (with sim.launch.py running):
     ros2 launch airmouse_bringup localization.launch.py use_ground_truth:=true
 """
 
+import os
 from pathlib import Path
 
 from ament_index_python.packages import get_package_share_directory
@@ -57,14 +58,21 @@ def launch_setup(context: LaunchContext) -> list:
             'Kp/MaxFeatures': '400',                # visual words for loop closure (Pi budget)
             'Vis/MaxFeatures': '600',
             'Reg/Strategy': '1' if use_lidar else '0',          # refine links with ICP / visual
-            'RGBD/NeighborLinkRefining': 'true' if use_lidar else 'false',
+            # Do NOT refine consecutive links with ICP: matching flat 2D scans in 6 DoF shifted
+            # the map frame (0.21 m RMS, 0.14 m in height). EKF odometry alone is ~0.02-0.06 m.
+            'RGBD/NeighborLinkRefining': 'false',
             'RGBD/ProximityBySpace': 'true',
             'RGBD/LinearUpdate': '0.05',
             'RGBD/AngularUpdate': '0.05',
             'Icp/VoxelSize': '0.05',
             'Icp/MaxCorrespondenceDistance': '0.15',
-            'Icp/CorrespondenceRatio': '0.2',
+            'Icp/CorrespondenceRatio': '0.4',       # accept only well-overlapping scan matches
         })
+    # Tuning hook: AIRMOUSE_SLAM_OVERRIDES="Key=value,Key2=value2" overrides RTAB-Map parameters
+    # for one run (used by the Phase 6 tuning runs; unset in normal use).
+    for item in filter(None, os.environ.get('AIRMOUSE_SLAM_OVERRIDES', '').split(',')):
+        key, value = item.split('=', 1)
+        slam_params[key.strip()] = value.strip()
     nodes.append(Node(
         package='rtabmap_slam', executable='rtabmap', name='rtabmap', output='screen',
         arguments=['--delete_db_on_start'],

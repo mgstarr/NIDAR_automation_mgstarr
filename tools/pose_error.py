@@ -9,6 +9,7 @@ and shows the drift in shape alone.
 
 Usage (stack running, any mode):
     python3 tools/pose_error.py [--duration 600] [--csv /tmp/pose.csv] [--min-altitude 0.3]
+It also reports the odometry-only error (TF odom -> base_link: EKF without SLAM correction).
 Ctrl+C (or --duration) prints:
     POSE ERROR rmse 0.043 m, mean 0.036, max 0.121, final 0.050 (aligned rmse 0.031) over N samples
 Library use: ate(est, gt) with rows (t, x, y) -> dict.
@@ -79,7 +80,7 @@ def main() -> int:
     node = Node('pose_error', parameter_overrides=[Parameter('use_sim_time', value=True)])
     buf = Buffer()
     TransformListener(buf, node)
-    est, gt = [], []
+    est, gt, odo = [], [], []
 
     def on_gt(msg: Odometry) -> None:
         p = msg.pose.pose.position
@@ -92,8 +93,15 @@ def main() -> int:
         except TransformException:
             return
         t = tf.header.stamp.sec + tf.header.stamp.nanosec * 1e-9
-        if tf.transform.translation.z >= args.min_altitude and (not est or t > est[-1][0]):
+        if not est or t > est[-1][0]:
             est.append((t, tf.transform.translation.x, tf.transform.translation.y))
+        try:    # odometry alone (EKF, no SLAM correction), for comparison
+            o = buf.lookup_transform('odom', 'base_link', Time())
+            to = o.header.stamp.sec + o.header.stamp.nanosec * 1e-9
+            if not odo or to > odo[-1][0]:
+                odo.append((to, o.transform.translation.x, o.transform.translation.y))
+        except TransformException:
+            pass
 
     node.create_subscription(Odometry, '/ground_truth/odom', on_gt, 50)
     node.create_timer(0.1, sample)
@@ -109,6 +117,10 @@ def main() -> int:
     r = ate(np.array(est), np.array(gt))
     print(f"POSE ERROR rmse {r['rmse']:.3f} m, mean {r['mean']:.3f}, max {r['max']:.3f}, "
           f"final {r['final']:.3f} (aligned rmse {r['aligned_rmse']:.3f}) over {r['samples']} samples")
+    if len(odo) > 1:
+        o = ate(np.array(odo), np.array(gt))
+        print(f"ODOMETRY ONLY (odom -> base_link) rmse {o['rmse']:.3f} m, max {o['max']:.3f}, "
+              f"final {o['final']:.3f}")
     if args.csv:
         e = np.array(est)
         g = np.array(gt)

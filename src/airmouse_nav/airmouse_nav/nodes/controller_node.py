@@ -66,6 +66,7 @@ class ControllerNode(Node):
         rate = d('control_rate', 30.0).value
         self.map_frame = d('map_frame', 'map').value
         self.robot_frame = d('robot_frame', 'base_link').value
+        self.odom_frame = d('odom_frame', 'odom').value
 
         self.pp = PurePursuit(self.params)
         self.path_time: float | None = None
@@ -102,7 +103,16 @@ class ControllerNode(Node):
             tf = self.tf_buffer.lookup_transform(self.map_frame, self.robot_frame, Time())
             pose_time = Time.from_msg(tf.header.stamp).nanoseconds * 1e-9
             t = tf.transform.translation
-            pose = Pose(t.x, t.y, t.z, yaw_from_quaternion(tf.transform.rotation))
+            # Height comes from the odom frame when it exists (EKF: rangefinder height above the
+            # floor). The map frame's z can shift when RTAB-Map corrects drift (measured 0.14 m
+            # in Phase 6), and altitude must not follow that.
+            z = t.z
+            try:
+                z = self.tf_buffer.lookup_transform(
+                    self.odom_frame, self.robot_frame, Time()).transform.translation.z
+            except TransformException:
+                pass
+            pose = Pose(t.x, t.y, z, yaw_from_quaternion(tf.transform.rotation))
             self.last_pose = pose
         except TransformException:
             pass

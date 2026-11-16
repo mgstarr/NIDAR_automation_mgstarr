@@ -20,6 +20,12 @@ python3 tools/clearance.py --layout src/airmouse_description/worlds/generated/se
 CL=$!
 ros2 service call /mission/start std_srvs/srv/Trigger >> $LOG 2>&1
 T0=$(date +%s)
+# Optional localization-loss test: DROP_AFTER=<wall seconds> stops the sensor-odometry node
+# (icp_odometry / rgbd_odometry), as if its sensor topic had dropped out.
+if [ -n "$DROP_AFTER" ]; then
+  ( sleep $DROP_AFTER; echo "$(( $(date +%s) - T0 ))s DROP sensor odometry" >> $LOG;
+    pkill -9 -f "[r]tabmap_odom/" ) &
+fi
 # Optional mid-mission service test: CALL_SRV=abort|return_home CALL_AFTER=<wall seconds>
 if [ -n "$CALL_SRV" ]; then
   ( sleep ${CALL_AFTER:-120}; echo "$(( $(date +%s) - T0 ))s CALL /mission/$CALL_SRV" >> $LOG;
@@ -35,7 +41,7 @@ while true; do
   sleep 5
 done
 sleep 3
-kill -INT $CL $PE; sleep 2
+kill -INT $CL $PE; sleep 5
 pkill -INT -f "[r]os2 bag record"; pkill -INT -f "[s]ave_detections"; sleep 2
 grep -a -E "mission:|exploration complete|return budget|no path home|geofence|localization|blacklisted" /tmp/mission_launch.log | tail -25 >> $LOG
 cp /tmp/mission_launch.log /tmp/mission_launch_${SEED}_${LIDAR}.log

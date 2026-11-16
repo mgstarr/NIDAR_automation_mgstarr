@@ -57,6 +57,7 @@ NODE_NAME = 'explorer_node'
 TICK = 0.1                 # s
 LOOK_STEPS = 4             # look-around: four 90-degree turns
 ABORT_HOLD = 2.0           # s of hover before landing in place
+HOME_SNAP_RADIUS = 0.6     # m: land this close to home if the home cell itself is blocked
 
 
 def yaw_of(q) -> float:
@@ -111,6 +112,7 @@ class ExplorerNode(Node):
         self.pose = None              # (x, y, z, yaw)
         self.pose_time = -math.inf    # wall time of the last good pose
         self.home = None
+        self.home_target = None       # landing point (home, or the nearest safe cell to it)
         self.t_start = None
         self.state_since = self.now()
         self.path_points: list[tuple[float, float, float]] = []
@@ -223,9 +225,14 @@ class ExplorerNode(Node):
         except TransformException:
             return
         t = tf.transform.translation
+        z = t.z
+        try:    # height above the floor from the odom frame (see controller_node)
+            z = self.tf_buffer.lookup_transform('odom', 'base_link', Time()).transform.translation.z
+        except TransformException:
+            pass
         stamp = Time.from_msg(tf.header.stamp).nanoseconds * 1e-9
         if self.now() - stamp <= self.loc_timeout:
-            self.pose = (t.x, t.y, t.z, yaw_of(tf.transform.rotation))
+            self.pose = (t.x, t.y, z, yaw_of(tf.transform.rotation))
             self.pose_time = self.now()
 
     # ------------------------------------------------------------------ services
@@ -484,8 +491,13 @@ class ExplorerNode(Node):
                              self.safety_factor, self.landing_time, self.reserve)
 
     def return_step(self, x, y, z, yaw, reached) -> None:
-        """Fly home; AT_HOME when there and the controller reports reached."""
-        if math.hypot(x - self.home[0], y - self.home[1]) <= self.tol and reached:
+        """Fly home; AT_HOME when there and the controller reports reached.
+
+        If the home point itself is blocked on the map (on a SLAM map the walls of the entry
+        cell can sit a few centimetres off), the nearest safe cell within HOME_SNAP_RADIUS is
+        used as the landing point."""
+        target = self.home_target or self.home
+        if math.hypot(x - target[0], y - target[1]) <= self.tol and reached:
             self.change(Trigger.AT_HOME)
             return
         if self.now() < self.next_replan or self.map_msg is None:
@@ -498,13 +510,23 @@ class ExplorerNode(Node):
         grid = clear_unknown_around(grid, info, self.home, self.p.clear_radius)
         pg = build_planning_grid(grid, info, self.p.guarded_radius, self.p.safety_margin,
                                  self.p.wall_cost_range)
-        res = plan(pg, (x, y), self.home, wall_cost_weight=self.p.wall_cost_weight)
+        target = self.home
+        r, c = world_to_cell(info, *self.home)
+        if not (0 <= r < info.rows and 0 <= c < info.cols) or pg.blocked[r, c]:
+            free = np.argwhere(~pg.blocked)
+            if free.size:
+                d2 = (free[:, 0] - r) ** 2 + (free[:, 1] - c) ** 2
+                k = int(np.argmin(d2))
+                if d2[k] * info.resolution ** 2 <= HOME_SNAP_RADIUS ** 2:
+                    target = cell_to_world(info, int(free[k, 0]), int(free[k, 1]))
+        self.home_target = target
+        res = plan(pg, (x, y), target, wall_cost_weight=self.p.wall_cost_weight)
         if not res.success:
             self.get_logger().warn(f'no path home: {res.reason}', throttle_duration_sec=5.0)
             return
         pts = [(px, py, self.flight_altitude) for px, py in res.path]
         pts.insert(0, (x, y, self.flight_altitude))
-        pts.append((self.home[0], self.home[1], self.flight_altitude))
+        pts.append((target[0], target[1], self.flight_altitude))
         self.publish_path(pts, None)
 
     def outside_blocked(self, grid: np.ndarray, info: GridInfo) -> np.ndarray:
