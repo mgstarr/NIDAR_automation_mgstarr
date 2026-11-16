@@ -57,7 +57,10 @@ def ray_cells(grid: np.ndarray, info: GridInfo, x: float, y: float, yaw: float, 
     r, c = rows[keep], cols[keep]
     if r.size == 0:
         return r, c
-    flat = np.unique(r * info.cols + c)
+    # Unique cells via a mask over the grid (much faster than sorting the samples).
+    mask = np.zeros(info.rows * info.cols, dtype=bool)
+    mask[r * info.cols + c] = True
+    flat = np.flatnonzero(mask)
     return flat // info.cols, flat % info.cols
 
 

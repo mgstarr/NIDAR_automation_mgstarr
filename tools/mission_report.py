@@ -35,13 +35,17 @@ def read_bag(path: str):
     r.open(rosbag2_py.StorageOptions(uri=path, storage_id='mcap'),
            rosbag2_py.ConverterOptions('', ''))
     types = {t.name: t.type for t in r.get_all_topics_and_types()}
-    poses, states = [], []
+    poses, states, dets = [], [], []
     while r.has_next():
         topic, data, t = r.read_next()
-        if topic not in ('/ground_truth/odom', '/mission/state'):
+        if topic not in ('/ground_truth/odom', '/mission/state', '/detection/survivors'):
             continue
         m = deserialize_message(data, get_message(types[topic]))
-        if topic == '/ground_truth/odom':
+        if topic == '/detection/survivors':
+            if m.detections:
+                dets.append((m.header.stamp.sec + m.header.stamp.nanosec * 1e-9,
+                             len(m.detections)))
+        elif topic == '/ground_truth/odom':
             p, q = m.pose.pose.position, m.pose.pose.orientation
             stamp = m.header.stamp.sec + m.header.stamp.nanosec * 1e-9
             yaw = math.atan2(2 * (q.w * q.z + q.x * q.y), 1 - 2 * (q.y * q.y + q.z * q.z))
@@ -49,7 +53,7 @@ def read_bag(path: str):
         else:
             states.append((t * 1e-9, m.data))
     poses.sort()
-    return poses, states
+    return poses, states, dets
 
 
 def main() -> int:
@@ -60,7 +64,7 @@ def main() -> int:
     args = ap.parse_args()
     p = ExplorerParams()
     w = G.World(args.seed)
-    poses, states = read_bag(args.bag)
+    poses, states, dets = read_bag(args.bag)
     flying = [q for q in poses if q[3] > 0.5]
     seen = np.zeros(w.occ.shape, bool)
     survivors: set[int] = set()
@@ -78,6 +82,19 @@ def main() -> int:
         survivors |= {int(i) for i in ids[ids >= 0]}
         free = ~w.occ[rows, cols]
         seen[rows[free], cols[free]] = True
+    # Detected survivors: at each detection frame, the survivors the camera could see then
+    # (ground-truth pose at the frame's stamp, same ray model, out to SENSOR_RANGE x 2).
+    detected: set[int] = set()
+    false_frames = 0
+    pt = np.array([q[0] for q in poses])
+    for t, _n in dets:
+        k = int(np.clip(np.searchsorted(pt, t), 0, len(poses) - 1))
+        _, x, y, z, yaw = poses[k]
+        rows, cols = ray_cells(w.truth, w.info, x, y, yaw, p.camera_hfov, 6.0)
+        ids = w.survivor_id[rows, cols]
+        in_view = {int(i) for i in ids[ids >= 0]}
+        detected |= in_view
+        false_frames += not in_view
     length = sum(math.hypot(b[1] - a[1], b[2] - a[2]) for a, b in zip(poses, poses[1:])
                  if b[3] > 0.3)
     t_takeoff = next((q[0] for q in poses if q[3] > 0.3), poses[0][0])
@@ -92,6 +109,8 @@ def main() -> int:
     print(f'seed {args.seed}: final state {states[-1][1] if states else "?"}; '
           f'flight time {t_end - t_takeoff:.0f} s; path {length:.1f} m; '
           f'survivors in coverage {len(survivors)}/{len(w.maze.survivors)}; '
+          f'survivors DETECTED {len(detected)}/{len(w.maze.survivors)} '
+          f'({len(dets)} frames with detections, {false_frames} with no survivor in view); '
           f'arena coverage {100 * (seen & true_free).sum() / true_free.sum():.1f}%; '
           f'rooms >= 95% of seeable {sum(f >= 0.95 for f in rooms)}/{len(rooms)} '
           f'(min {100 * min(rooms):.0f}%); final distance from home '

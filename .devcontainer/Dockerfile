@@ -10,6 +10,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         ros-jazzy-rtabmap-ros \
         ros-jazzy-robot-localization \
         ros-jazzy-teleop-twist-keyboard \
+        ros-jazzy-vision-msgs \
+        python3-pip \
+        python3-opencv \
         python3-numpy \
         python3-scipy \
         python3-pytest \
@@ -33,3 +36,14 @@ RUN echo 'source /opt/ros/jazzy/setup.bash' >> /home/${USERNAME}/.bashrc \
 USER ${USERNAME}
 WORKDIR /ws
 CMD ["bash"]
+
+# Survivor detection (airmouse_detection): CPU-only PyTorch + Ultralytics, as on the Raspberry Pi.
+# numpy stays below 2 (ROS Jazzy's Python packages are built against numpy 1.x); OpenCV comes
+# from apt, so Ultralytics is installed without its dependency list and its real needs are named.
+RUN echo "numpy<2" > /tmp/constraints.txt \
+    && python3 -m pip install --break-system-packages --no-cache-dir -c /tmp/constraints.txt \
+        --index-url https://download.pytorch.org/whl/cpu torch torchvision \
+    && python3 -m pip install --break-system-packages --no-cache-dir -c /tmp/constraints.txt \
+        --no-deps ultralytics ultralytics-thop \
+    && python3 -m pip install --break-system-packages --no-cache-dir -c /tmp/constraints.txt \
+        tqdm psutil py-cpuinfo polars requests

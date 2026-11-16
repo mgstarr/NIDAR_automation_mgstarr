@@ -19,7 +19,7 @@ How a replan works:
      Map frontiers (free next to unknown) and view frontiers (free, unseen) are clustered
      (frontier.cluster_cells, min_cluster_size cells).
   3. Candidates: safe, reachable cells with a clear line of sight to a cluster anchor (the
-     anchor cell, plus quarter points of large clusters) within coverage_range; one per
+     anchor cell, plus the first, middle and last cells of large clusters) within coverage_range; one per
      direction sector (sample_directions) and distance band (sample_radii, then out to
      coverage_range); heading = facing the anchor.
   4. gain = m^2 of target cells visible from the candidate pose (coverage.ray_cells, rays stop
@@ -164,11 +164,10 @@ def view_gain(grid: np.ndarray, info: GridInfo, target: np.ndarray, x: float, y:
 
 
 def cluster_anchors(cluster: Cluster) -> list[tuple[int, int]]:
-    """Cells of a cluster to aim at: its anchor, plus the quarter points of large clusters."""
+    """Cells of a cluster to aim at: its anchor, plus the first, middle and last cells of large clusters."""
     anchors = [cluster.anchor]
-    if cluster.size > 40:
-        for q in (0, cluster.size // 4, cluster.size // 2, 3 * cluster.size // 4,
-                  cluster.size - 1):
+    if cluster.size > 60:
+        for q in (0, cluster.size // 2, cluster.size - 1):
             cell = (int(cluster.cells[q, 0]), int(cluster.cells[q, 1]))
             if cell not in anchors:
                 anchors.append(cell)
@@ -191,7 +190,8 @@ def sample_candidates(cluster: Cluster, info: GridInfo, pg: PlanningGrid, costs:
     for ar, ac in cluster_anchors(cluster):
         ax, ay = cell_to_world(info, ar, ac)
         if grid is not None:
-            rows, cols = ray_cells(grid, info, ax, ay, 0.0, 2 * math.pi, p.coverage_range)
+            rows, cols = ray_cells(grid, info, ax, ay, 0.0, 2 * math.pi, p.coverage_range,
+                                   coarse=True)
         else:
             reach = int(math.ceil(p.coverage_range / info.resolution))
             rr, cc = np.mgrid[max(0, ar - reach):min(info.rows, ar + reach + 1),
@@ -271,15 +271,30 @@ class ExplorationPlanner:
 
         cands = []
         for cl in map_cl + view_cl:
-            for v in sample_candidates(cl, info, pg, costs, p, g):
-                cands.append(self._score(v, g, info, target, costs, yaw))
-        cands = [v for v in cands if v.gain >= min_gain]
+            cands += sample_candidates(cl, info, pg, costs, p, g)
+        for v in cands:      # cost first (cheap); gain (a ray cast) only when it can matter
+            v.cost += p.turn_cost * abs(math.remainder(v.yaw - yaw, 2 * math.pi))
+        cands.sort(key=lambda v: (v.cost, v.x, v.y))
+        # No view can gain more than the camera's whole field of view.
+        max_gain = 0.5 * p.camera_hfov * p.coverage_range ** 2
 
         def best_allowed() -> Viewpoint | None:
-            ok = [v for v in cands if all(math.hypot(v.x - bx, v.y - by) >= BLACKLIST_RADIUS
-                                          for bx, by in self.blacklist)
-                  and not self._was_visited(v)]
-            return max(ok, key=lambda v: (v.score, -v.x, -v.y)) if ok else None
+            """Best-scoring allowed candidate. Candidates are tried in order of rising cost
+            and the search stops once even a full-view gain could not beat the best so far
+            (same result as scoring every candidate)."""
+            top = None
+            for v in cands:
+                if top is not None and p.gain_weight * max_gain - v.cost < top.score:
+                    break
+                if self._was_visited(v) or any(
+                        math.hypot(v.x - bx, v.y - by) < BLACKLIST_RADIUS
+                        for bx, by in self.blacklist):
+                    continue
+                if v.score == 0.0 and v.gain == 0.0:
+                    self._score(v, g, info, target, costs, yaw)
+                if v.gain >= min_gain and (top is None or v.score > top.score):
+                    top = v
+            return top
 
         best = best_allowed()
 
